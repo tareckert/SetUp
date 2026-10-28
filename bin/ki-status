@@ -1,0 +1,24 @@
+#!/bin/sh
+# ki-status – Statuszeile für i3bar: laufende Jobs, GPU und i3status (CPU, RAM, SSD, Uhr).
+# nvidia-smi läuft nur alle 5 s (Intervall von i3status) und ist dank Persistence Mode schnell.
+KI_PROJECTS="$HOME/projects"
+# shellcheck source=/dev/null
+[ -f "$HOME/.config/ki/ki.conf" ] && . "$HOME/.config/ki/ki.conf"
+
+jobs() {
+    n=0
+    for f in "$KI_PROJECTS"/*/.ki/jobs/*.pid; do
+        [ -f "$f" ] && kill -0 "$(cat "$f" 2>/dev/null)" 2>/dev/null && n=$((n + 1))
+    done
+    [ "$n" -gt 0 ] && printf 'Jobs %s | ' "$n"
+}
+gpu() {
+    command -v nvidia-smi >/dev/null 2>&1 || return
+    nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu \
+        --format=csv,noheader,nounits 2>/dev/null |
+        awk -F', *' 'NR==1 {printf "GPU %s%% %.1f/%.0fG %s°C | ", $1, $2/1024, $3/1024, $4}'
+}
+
+i3status -c "$HOME/.config/i3status/config" | while IFS= read -r line; do
+    printf '%s%s%s\n' "$(jobs)" "$(gpu)" "$line"
+done

@@ -1,0 +1,2 @@
+# /etc/sudoers.d/ki-workstation – Freigaben ohne Passwort, nur diese Befehle
+@USER@ ALL=(root) NOPASSWD: /usr/local/sbin/ki-power, /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot

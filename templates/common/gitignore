@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Trainingsergebnisse und Daten – groß, gehören nicht ins Git
+runs/
+checkpoints/
+*.pt
+*.pth
+*.safetensors
+*.ckpt
+data/
+
+# IDE und Node
+.idea/
+node_modules/

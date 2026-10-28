@@ -1,0 +1,47 @@
+! ~/.Xresources – KI-Workstation, Darcula-Farbschema für urxvt
+
+Xft.dpi:        96
+Xft.antialias:  true
+Xft.hinting:    true
+Xft.hintstyle:  hintslight
+Xft.rgba:       rgb
+
+URxvt*background:  #2B2B2B
+URxvt*foreground:  #A9B7C6
+URxvt*cursorColor: #CC7832
+URxvt*color0:  #2B2B2B
+URxvt*color1:  #F2777A
+URxvt*color2:  #6A8759
+URxvt*color3:  #CC7832
+URxvt*color4:  #6897BB
+URxvt*color5:  #9876AA
+URxvt*color6:  #629755
+URxvt*color7:  #A9B7C6
+URxvt*color8:  #555555
+URxvt*color9:  #F2777A
+URxvt*color10: #A5C261
+URxvt*color11: #FFC66D
+URxvt*color12: #6897BB
+URxvt*color13: #9876AA
+URxvt*color14: #629755
+URxvt*color15: #FFFFFF
+
+URxvt*font:           xft:DejaVu Sans Mono:size=11
+URxvt*termName:       rxvt-unicode-256color
+URxvt*scrollBar:      false
+URxvt*saveLines:      5000
+URxvt*internalBorder: 8
+URxvt*cursorBlink:    false
+URxvt*urgentOnBell:   true
+
+! Strg+Shift frei machen (sonst startet der ISO-14755-Eingabemodus)
+URxvt.iso14755:    false
+URxvt.iso14755_52: false
+
+! Schriftgröße: Strg+Bild↑/↓ oder Strg+Plus/Minus, Strg+0 = zurück (font-size liegt Ubuntus urxvt bei)
+! Kopieren/Einfügen mit der Zwischenablage (wie in PyCharm): Strg+Shift+C/V
+URxvt.perl-ext-common:        default,eval,font-size
+URxvt.keysym.C-Prior:         font-size:increase
+URxvt.keysym.C-Next:          font-size:decrease
+URxvt.keysym.Shift-Control-C: eval:selection_to_clipboard
+URxvt.keysym.Shift-Control-V: eval:paste_clipboard

@@ -1,0 +1,4 @@
+# PyTorch von PyPI bringt die passenden CUDA-Bibliotheken selbst mit – kein CUDA-Toolkit nötig.
+# Installieren im Projekt-Terminal:  uv pip install -r requirements.txt
+torch
+numpy

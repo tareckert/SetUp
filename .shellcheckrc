@@ -1,0 +1,3 @@
+# SC2016: Skripte für den Kerker stehen absichtlich in einfachen Anführungszeichen
+# SC2088: "~/…" in Meldungen ist Text für Menschen, kein Pfad
+disable=SC2016,SC2088

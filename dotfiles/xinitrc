@@ -1,0 +1,5 @@
+#!/bin/sh
+# ~/.xinitrc – KI-Workstation
+# Farben laden, bevor das erste Fenster erscheint (B2: sonst ist das Menü weiß)
+[ -f "$HOME/.Xresources" ] && xrdb -merge "$HOME/.Xresources"
+exec i3

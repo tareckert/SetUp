@@ -1,0 +1,19 @@
+# ~/.config/ki/ki.conf – eigene Einstellungen für ki (Bash-Syntax). Alles optional.
+
+# Wo die Projekte liegen (z. B. auf einer zweiten SSD)
+#KI_PROJECTS="$HOME/projects"
+
+# Datensätze, im Kerker nur lesbar unter ~/shared_data
+#KI_SHARED="$HOME/shared_data"
+
+# PyCharm-Installation (Symlink auf die aktuelle Version)
+#KI_PYCHARM="/opt/pycharm"
+
+# Heap-Obergrenze für PyCharm beim ersten Start (danach: Help → Change Memory Settings)
+#KI_IDE_XMX="2048m"
+
+# uv für schnelle Installationen ohne doppelte Pakete: auto (wenn installiert) oder 0 (nur pip)
+#KI_USE_UV=auto
+
+# Port für "ki jupyter"
+#KI_JUPYTER_PORT=8888

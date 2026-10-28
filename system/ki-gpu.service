@@ -1,0 +1,15 @@
+# /etc/systemd/system/ki-gpu.service – NVIDIA Persistence Mode beim Booten
+# Hält den Treiber initialisiert: CUDA startet sofort, nvidia-smi antwortet schnell,
+# die Karte bleibt im sparsamen P8-Zustand statt bei jedem Programmstart neu zu initialisieren.
+[Unit]
+Description=KI-Workstation: NVIDIA Persistence Mode
+After=systemd-modules-load.service nvidia-persistenced.service
+ConditionPathExists=/usr/bin/nvidia-smi
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/nvidia-smi -pm 1
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

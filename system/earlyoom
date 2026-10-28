@@ -1,0 +1,4 @@
+# /etc/default/earlyoom – KI-Workstation
+# Beendet bei echtem Speichermangel (<5 % RAM UND <10 % Swap frei) den größten Prozess,
+# bevor das System minutenlang einfriert. Oberfläche, Menü und SSH bleiben verschont.
+EARLYOOM_ARGS="-m 5 -s 10 -r 0 --avoid '(^|/)(Xorg|i3|i3bar|i3status|urxvt|sshd|systemd|systemd-.*|ki-menu|ki-status|bash)$'"

@@ -1,0 +1,61 @@
+# KI auf der RTX 2060 (6 GB, Turing) – Praxisblatt
+
+Was auf dieser Hardware gut geht, was nicht, und wie man die 6 GB VRAM und 16 GB RAM ausreizt.
+
+## Grundregeln
+
+| Thema | Empfehlung | Warum |
+|---|---|---|
+| Präzision | **fp16** mit `torch.autocast(..., dtype=torch.float16)` + `torch.amp.GradScaler` | Turing hat Tensor Cores für fp16, nicht für bf16 (bf16 wird nur langsam emuliert) |
+| Attention | `torch.nn.functional.scaled_dot_product_attention` | FlashAttention-2 braucht Ampere; PyTorch wählt auf Turing automatisch den speichersparenden Kernel |
+| VRAM-Fragmentierung | im ML-Profil gesetzt: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` | weniger „CUDA out of memory“ trotz freiem Speicher |
+| Batchgröße | so groß, wie es passt; darüber **Gradient Accumulation** | effektive Batchgröße ohne mehr VRAM |
+| Große Modelle | **Gradient Checkpointing**, **LoRA/QLoRA** (4 Bit, bitsandbytes) | Fine-Tuning von 1–3B-Modellen wird auf 6 GB machbar |
+| DataLoader | `num_workers=2…4`, `pin_memory=True`, `persistent_workers=True` | 4 Kerne – mehr Worker kosten nur RAM |
+| Datensätze | in `~/shared_data` ablegen (im Kerker nur lesbar), Ergebnisse in `~/code/runs/` | einmal speichern, in allen Projekten nutzen |
+| Kompilieren | `torch.compile` lohnt sich bei langen Läufen; Cache bleibt im Projekt (`TORCHINDUCTOR_CACHE_DIR`) | erster Lauf kompiliert, spätere nicht mehr |
+| Messen | `python gpu_check.py` (ML-Vorlage), `ki top`, Leiste unten | fp16 sollte ein Vielfaches von fp32 schaffen |
+
+## Workflow
+
+```bash
+ki new bilder --profile ml --torch     # Projekt mit PyTorch (CUDA-Bibliotheken kommen mit, kein Toolkit nötig)
+ki shell bilder                        # Terminal im Kerker
+python gpu_check.py                    # GPU, VRAM, fp16-Leistung
+exit
+ki run bilder -- python train_example.py   # Training im Hintergrund, PyCharm darf zu sein
+ki logs bilder                         # mitlesen (Strg+C stoppt Mitlaufen, q beendet)
+ki stop bilder                         # wie Strg+C – die Vorlage speichert und setzt später fort
+```
+
+Beim Training PyCharm schließen spart 1,5–2 GB RAM; geschrieben wird währenddessen mit dem Zweitrechner
+(`ki jupyter`, oder VS Code/PyCharm per SSH auf `~/projects/<p>/code`).
+
+## Sprachmodelle laufen lassen (Inferenz)
+
+| Modellgröße | Format | Passt in 6 GB? |
+|---|---|---|
+| 1–3B | fp16 | ja |
+| 7–8B | 4 Bit (GGUF Q4_K_M, AWQ/GPTQ) | knapp, mit kurzem Kontext |
+| 13B+ | 4 Bit | nur teilweise auf der GPU (Rest CPU/RAM, langsam) |
+
+Ohne Systemdienst und ohne Modelle außerhalb der Projekte:
+
+- **llama.cpp über Python:** `uv pip install llama-cpp-python` (CUDA-Build laut dessen Doku), Modell als
+  GGUF nach `~/shared_data/models/` legen und per Pfad laden.
+- **Ollama im Kerker:** Linux-Archiv in ein Projekt entpacken, `OLLAMA_MODELS` in `.ki/env` auf einen
+  Ordner im Projekt setzen, `ollama serve` per `ki run` starten – läuft nur, solange der Job läuft.
+- **Hugging Face Transformers:** `device_map="auto"` und `load_in_4bit` (bitsandbytes) für 7B-Modelle.
+
+Modelle, die mehrere Projekte brauchen, einmal auf dem Host nach `~/shared_data/models/` laden statt
+in jedes Projekt-`HF_HOME`.
+
+## Wenn es eng wird
+
+- **CUDA out of memory:** Batchgröße halbieren, Accumulation verdoppeln; `torch.cuda.empty_cache()` hilft
+  selten. VRAM-Spitze mit `torch.cuda.max_memory_allocated()` messen (die Vorlage zeigt sie an).
+- **Prozess plötzlich weg, Log endet abrupt:** earlyoom hat bei RAM-Mangel eingegriffen
+  (`journalctl -u earlyoom`). `num_workers` senken, Datensätze streamen statt komplett laden.
+- **GUI ruckelt beim Training:** Bildschirm auf die iGPU legen (SYSTEM.md, Abschnitt 4.7).
+- **Jeder CUDA-Start dauert Sekunden:** Persistence Mode prüfen (`ki doctor`).
+- **Langer Lauf, CPU als Flaschenhals** (Datenvorbereitung): `ki power performance`, danach `balanced`.
