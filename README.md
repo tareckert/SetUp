@@ -45,10 +45,10 @@ einen USB-Stick kopieren. Beim Installieren wird die Ubuntu-Partition formatiert
 2. **Nach dem Neustart** auf der Konsole anmelden und das Setup holen:
    ```bash
    sudo apt update && sudo apt install -y git
-   git clone https://github.com/tareckert/SetUp ~/.ki/system
+   git clone -b main https://github.com/tareckert/SetUp ~/.ki/system
    ```
-   (Privates Repo: als Passwort ein GitHub-Token eingeben. Ohne Netz: Repo per USB-Stick nach
-   `~/.ki/system` kopieren – `sudo mount /dev/sdb1 /mnt && cp -r /mnt/SetUp ~/.ki/system && sudo umount /mnt`.)
+   (Ohne Netz: Repo per USB-Stick nach `~/.ki/system` kopieren –
+   `sudo mount /dev/sdb1 /mnt && cp -r /mnt/SetUp ~/.ki/system && sudo umount /mnt`.)
 3. **Funktionen wählen und installieren:**
    ```bash
    ~/.ki/system/setup
