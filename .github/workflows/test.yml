@@ -1,0 +1,17 @@
+name: Tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Werkzeuge
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck bubblewrap rsync i3-wm
+          # Ubuntu 24.04 sperrt unprivilegierte User-Namespaces – für den Kerker-Test freigeben
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: tests/run.sh
+        run: ./tests/run.sh

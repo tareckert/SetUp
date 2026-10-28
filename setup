@@ -1,0 +1,346 @@
+#!/usr/bin/env bash
+# setup – Funktionen der KI-Workstation installieren, entfernen und aktualisieren
+#
+#   ./setup                     Auswahl anzeigen (Nummern umschalten) und übernehmen
+#   ./setup list                alle Funktionen mit Status
+#   ./setup install <name…>     installieren (benötigte Funktionen kommen mit)
+#   ./setup remove <name…>      restlos entfernen: Dateien, Zeilen, Dienste, Pakete, Daten
+#   ./setup reinstall <name…>   entfernen und neu installieren (z. B. für die neueste uv-Version)
+#   ./setup files <name>        zeigen, was eine Funktion außerhalb ihres Ordners angelegt hat
+#   ./setup update              Repo aktualisieren (Änderungen vorher zeigen), Funktionen neu anwenden
+#   ./setup remove-all          alles entfernen – zurück zum frischen Ubuntu (Projekte bleiben)
+#
+#   --yes        alle Fragen mit der Vorgabe beantworten
+#   --keep-data  beim Entfernen ~/.ki/<name>/ (Einstellungen, Daten) behalten
+set -uo pipefail
+# shellcheck disable=SC2086  # $SUDO ist absichtlich ungequotet (leer in Tests)
+
+REPO=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+# shellcheck source=core/lib.sh
+. "$REPO/core/lib.sh"
+
+# Reihenfolge = Installationsreihenfolge (jede Funktion steht hinter allem, was sie braucht)
+ORDER=(basis netz schlank speicher nvidia igpu cuda uv oberflaeche autologin menue pycharm dateien monitor node fernzugriff)
+
+KEEP=0
+ARGS=()
+for a in "$@"; do
+    case $a in
+        --yes|-y)    YES=1 ;;
+        --keep-data) KEEP=1 ;;
+        -h|--help)   sed -n '2,17p' "$0"; exit 0 ;;
+        *)           ARGS+=("$a") ;;
+    esac
+done
+set -- "${ARGS[@]}"
+export YES
+
+# ------------------------------------------------------------------ Hilfsfunktionen
+meta() {   # meta <funktion> <VARIABLE>
+    (
+        # shellcheck disable=SC2034  # werden von feature.sh überschrieben
+        TITLE="" DESC="" NEEDS="" DEFAULT=0 CORE=0 PACKAGES=""
+        # shellcheck source=/dev/null
+        . "$REPO/features/$1/feature.sh"
+        printf '%s' "${!2}"
+    )
+}
+known()     { [ -f "$REPO/features/$1/feature.sh" ]; }
+installed() { [ -f "$KI_DIR/$1/.installed" ]; }
+partial()   { [ -f "$KI_DIR/$1/.manifest" ] && ! installed "$1"; }
+in_list()   { local x=$1; shift; local y; for y in "$@"; do [ "$x" = "$y" ] && return 0; done; return 1; }
+
+needs_closure() {   # alle benötigten Funktionen (rekursiv), inklusive der genannten
+    local todo=("$@") done=() f n
+    while [ ${#todo[@]} -gt 0 ]; do
+        f=${todo[0]}; todo=("${todo[@]:1}")
+        in_list "$f" "${done[@]}" && continue
+        done+=("$f")
+        for n in $(meta "$f" NEEDS); do todo+=("$n"); done
+    done
+    printf '%s\n' "${done[@]}"
+}
+dependents() {   # installierte Funktionen, die (rekursiv) eine der genannten brauchen
+    local f
+    for f in "${ORDER[@]}"; do
+        installed "$f" || continue
+        in_list "$f" "$@" && continue
+        if grep -qxF -f <(printf '%s\n' "$@") <<< "$(needs_closure "$f")"; then printf '%s\n' "$f"; fi
+    done
+}
+in_order() {   # Funktionen in Installationsreihenfolge sortieren
+    local f
+    for f in "${ORDER[@]}"; do in_list "$f" "$@" && printf '%s\n' "$f"; done
+}
+manual_pkgs() { apt-mark showmanual 2>/dev/null | sort; }
+
+preflight() {
+    if [ "$(id -u)" -eq 0 ] && [ -z "$KI_ROOT" ]; then
+        err "Bitte als normaler Benutzer starten – sudo wird bei Bedarf gefragt."; exit 1
+    fi
+    if [ -n "$SUDO" ]; then $SUDO -v || exit 1; fi
+}
+APT_UPDATED=0
+apt_update_once() {
+    [ $APT_UPDATED = 1 ] && return 0
+    say "Paketlisten aktualisieren …"
+    if ! $SUDO apt-get update -qq; then
+        err "apt-get update fehlgeschlagen – Internet? (Installieren braucht Netz, Arbeiten nicht)"
+        return 1
+    fi
+    APT_UPDATED=1
+}
+
+# ------------------------------------------------------------------ Installieren / Entfernen
+install_one() {
+    local f=$1 before after rc man="$KI_DIR/$1/.manifest" p
+    printf '\n%s[%s]%s %s\n' "$C_B" "$f" "$C_0" "$(meta "$f" DESC)"
+    mkdir -p "$KI_DIR/$f"
+    before=$(manual_pkgs)
+    (
+        FEATURE=$f FSRC="$REPO/features/$f" FDIR="$KI_DIR/$f" MANIFEST=$man
+        touch "$MANIFEST"
+        # shellcheck source=/dev/null
+        . "$FSRC/feature.sh"
+        feature_install
+    )
+    rc=$?
+    after=$(manual_pkgs)
+    # Neu installierte Pakete merken – beim Entfernen werden genau diese wieder abgegeben
+    while IFS= read -r p; do
+        [ -n "$p" ] && ! grep -qxF "pkg	$p" "$man" && printf 'pkg\t%s\n' "$p" >> "$man"
+    done < <(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))
+    if [ $rc -eq 0 ]; then
+        printf '%s %s\n' "$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo -)" "$(date '+%F %T')" \
+            > "$KI_DIR/$f/.installed"
+        ok "$f installiert"
+    else
+        err "$f nicht vollständig installiert – erneut versuchen: ./setup install $f  (oder entfernen: ./setup remove $f)"
+    fi
+    return $rc
+}
+
+remove_one() {
+    local f=$1 dir="$KI_DIR/$1" o p release=() wanted=()
+    printf '\n%s[%s]%s entfernen\n' "$C_B" "$f" "$C_0"
+    run_hook() {
+        (
+            FEATURE=$f FSRC="$REPO/features/$f" FDIR=$dir MANIFEST="$dir/.manifest"
+            # shellcheck source=/dev/null
+            . "$FSRC/feature.sh"
+            if declare -F "$1" >/dev/null; then "$1"; fi
+        )
+    }
+    known "$f" && run_hook feature_pre_remove
+    undo_manifest "$dir/.manifest" "$f"
+    # Pakete nur abgeben, wenn keine andere installierte Funktion sie braucht
+    for o in "${ORDER[@]}"; do
+        [ "$o" = "$f" ] && continue
+        installed "$o" || continue
+        for p in $(meta "$o" PACKAGES); do wanted+=("$p"); done
+        while IFS=$'\t' read -r _ p; do wanted+=("$p"); done < <(grep '^pkg	' "$KI_DIR/$o/.manifest" 2>/dev/null)
+    done
+    for p in "${UNDO_PKGS[@]}"; do in_list "$p" "${wanted[@]}" || release+=("$p"); done
+    if [ ${#release[@]} -gt 0 ]; then
+        note "Pakete abgeben: ${release[*]}"
+        $SUDO apt-mark auto "${release[@]}" >/dev/null 2>&1
+        $SUDO env DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y >/dev/null ||
+            err "apt-get autoremove fehlgeschlagen"
+    fi
+    $SUDO systemctl daemon-reload >/dev/null 2>&1
+    known "$f" && run_hook feature_post_remove
+    if [ "$KEEP" = 1 ]; then
+        rm -rf "$dir/.manifest" "$dir/.installed" "$dir/.orig"
+        ok "$f entfernt – Daten bleiben in $dir"
+    else
+        rm -rf "$dir"
+        ok "$f restlos entfernt"
+    fi
+}
+
+summary_of() {   # Kurzfassung des Manifests für die Rückfrage
+    local man="$KI_DIR/$1/.manifest" n_f n_p
+    n_f=$(grep -cE '^(file|ufile|line|uline|comment|dir|upath)	' "$man" 2>/dev/null)
+    n_p=$(grep -c '^pkg	' "$man" 2>/dev/null)
+    printf '%s: %s Dateien/Einträge, %s Pakete, Ordner %s (%s)' "$1" "${n_f:-0}" "${n_p:-0}" \
+        "~/.ki/$1" "$(du -sh "$KI_DIR/$1" 2>/dev/null | cut -f1)"
+}
+
+do_install() {   # do_install <funktion…> – inklusive Abhängigkeiten, in Reihenfolge
+    local want=() f failed=() todo=()
+    for f in "$@"; do known "$f" || { err "Unbekannte Funktion: $f (./setup list)"; return 1; }; done
+    mapfile -t want < <(needs_closure "$@")
+    mapfile -t todo < <(in_order "${want[@]}")
+    preflight
+    apt_update_once || return 1
+    for f in "${todo[@]}"; do
+        if installed "$f" && ! in_list "$f" "$@"; then continue; fi   # Abhängigkeit schon da
+        install_one "$f" || failed+=("$f")
+    done
+    finish "${failed[@]}"
+}
+
+do_remove() {   # do_remove <funktion…> – fragt nach, nimmt Abhängige mit
+    local f deps=() todo=()
+    for f in "$@"; do
+        known "$f" || { err "Unbekannte Funktion: $f"; return 1; }
+        if [ "$(meta "$f" CORE)" = 1 ] && [ "${REMOVE_ALL:-0}" != 1 ]; then
+            err "$f ist der Kern und bleibt. Alles entfernen: ./setup remove-all"; return 1
+        fi
+        installed "$f" || partial "$f" || { skip "$f ist nicht installiert"; }
+    done
+    mapfile -t deps < <(dependents "$@")
+    todo=("$@" "${deps[@]}")
+    mapfile -t todo < <(in_order "${todo[@]}" | tac)
+    mapfile -t todo < <(for f in "${todo[@]}"; do if installed "$f" || partial "$f"; then echo "$f"; fi; done)
+    [ ${#todo[@]} -eq 0 ] && return 0
+    printf '\n%sWird entfernt:%s\n' "$C_B" "$C_0"
+    for f in "${todo[@]}"; do note "$(summary_of "$f")"; done
+    [ ${#deps[@]} -gt 0 ] && note "(${deps[*]} hängen davon ab und kommen mit)"
+    [ "$KEEP" = 1 ] && note "Daten in ~/.ki/<name>/ bleiben erhalten (--keep-data)"
+    if [ "$YES" != 1 ] && ! ask "Fortfahren?" n; then skip "abgebrochen"; return 1; fi
+    preflight
+    for f in "${todo[@]}"; do remove_one "$f"; done
+    finish
+}
+
+finish() {
+    printf '\n'
+    if [ $# -gt 0 ]; then err "Nicht vollständig: $*  (Log: $LOG)"; else say "Fertig. Log: $LOG"; fi
+    if [ -e "$KI_ROOT/var/run/reboot-required" ] || [ -f "$KI_DIR/.neustart" ]; then
+        rm -f "$KI_DIR/.neustart"
+        say "Neustart nötig, damit alles wirkt: sudo reboot"
+    fi
+    [ $# -eq 0 ]
+}
+
+do_list() {
+    local f st title
+    if [ "${1:-}" = --porcelain ]; then
+        for f in "${ORDER[@]}"; do
+            printf '%s\t%s\t%s\t%s\t%s\n' "$f" "$(installed "$f" && echo 1 || echo 0)" \
+                "$(meta "$f" CORE)" "$(meta "$f" TITLE)" "$(meta "$f" DESC)"
+        done
+        return
+    fi
+    printf '%s  %-12s %-14s %s%s\n' "$C_B" "Funktion" "Status" "Beschreibung" "$C_0"
+    for f in "${ORDER[@]}"; do
+        if installed "$f"; then st="${C_G}installiert${C_0}  "
+        elif partial "$f"; then st="${C_R}unvollständig${C_0}"
+        else st="${C_D}–${C_0}            "; fi
+        title=$(meta "$f" DESC)
+        printf '  %-12s %b %s\n' "$f" "$st" "$title"
+    done
+}
+
+do_files() {
+    local f=${1:-} man t a b
+    known "$f" || { err "Aufruf: ./setup files <funktion>"; return 1; }
+    man="$KI_DIR/$f/.manifest"
+    [ -f "$man" ] || { skip "$f ist nicht installiert"; return 0; }
+    printf '%sEigener Ordner:%s ~/.ki/%s (%s)\n' "$C_B" "$C_0" "$f" "$(du -sh "$KI_DIR/$f" | cut -f1)"
+    while IFS=$'\t' read -r t a b _; do
+        case $t in
+            file)    printf '  Datei      %s%s\n' "$a" "$([ "$b" != - ] && echo '  (Original gesichert)')" ;;
+            ufile)   printf '  Datei      ~/%s\n' "$a" ;;
+            line)    printf '  Zeile in   %s\n' "$a" ;;
+            uline)   printf '  Zeile in   ~/%s\n' "$a" ;;
+            comment) printf '  auskomm.   %s\n' "$a" ;;
+            enable)  printf '  Dienst an  %s\n' "$a" ;;
+            disable) printf '  Dienst aus %s\n' "$a" ;;
+            dir)     printf '  Programm   %s\n' "$a" ;;
+            upath)   printf '  Laufzeit   ~/%s\n' "$a" ;;
+            pkg)     printf '  Paket      %s\n' "$a" ;;
+        esac
+    done < "$man"
+}
+
+do_update() {
+    local new f inst=()
+    git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || { err "$REPO ist kein Git-Repo"; return 1; }
+    say "Suche Neuerungen …"
+    git -C "$REPO" fetch -q || { err "Kein Netz oder kein Zugriff auf das Repo"; return 1; }
+    new=$(git -C "$REPO" log --oneline 'HEAD..@{u}' 2>/dev/null)
+    if [ -z "$new" ]; then say "Setup ist aktuell."
+    else
+        printf '%sNeu:%s\n' "$C_B" "$C_0"; printf '%s\n' "$new" | sed 's/^/  /'
+        ask "Einspielen?" j || return 1
+        git -C "$REPO" pull -q --ff-only || { err "git pull fehlgeschlagen – lokale Änderungen? git -C $REPO status"; return 1; }
+    fi
+    for f in "${ORDER[@]}"; do installed "$f" && inst+=("$f"); done
+    say "Wende installierte Funktionen erneut an (nur Änderungen werden geschrieben) …"
+    preflight
+    apt_update_once || true
+    local failed=()
+    for f in "${inst[@]}"; do install_one "$f" || failed+=("$f"); done
+    finish "${failed[@]}"
+}
+
+# Auswahl in der Konsole – ohne gum, funktioniert schon auf dem frischen System
+do_select() {
+    local -A sel=()
+    local f i line n first=1 add=() del=()
+    for f in "${ORDER[@]}"; do installed "$f" && first=0; done
+    for f in "${ORDER[@]}"; do
+        if installed "$f"; then sel[$f]=1
+        elif [ $first = 1 ] && [ "$(meta "$f" DEFAULT)" = 1 ]; then sel[$f]=1
+        else sel[$f]=0; fi
+    done
+    if [ "$YES" != 1 ]; then
+        local width desc
+        width=$(( $(tput cols 2>/dev/null || echo 80) - 27 ))
+        while :; do
+            printf '\n%sKI-Workstation – Funktionen%s   [x] = gewählt, (i) = installiert\n\n' "$C_B" "$C_0"
+            i=1
+            for f in "${ORDER[@]}"; do
+                desc=$(meta "$f" DESC)
+                [ ${#desc} -gt "$width" ] && desc="${desc:0:$((width - 1))}…"
+                printf '  %2d [%s]%s %-12s %s\n' "$i" "$([ "${sel[$f]}" = 1 ] && echo x || echo ' ')" \
+                    "$(installed "$f" && echo '(i)' || echo '   ')" "$f" "$desc"
+                i=$((i + 1))
+            done
+            printf '\n  Nummern umschalten (z. B. "5 13"), Enter = übernehmen, q = abbrechen: '
+            read -r line </dev/tty || return 1
+            [ "$line" = q ] && return 1
+            [ -z "$line" ] && break
+            for n in $line; do
+                if ! [[ $n =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt ${#ORDER[@]} ]; then continue; fi
+                f=${ORDER[$((n - 1))]}
+                if [ "$(meta "$f" CORE)" = 1 ]; then note "$f ist der Kern und bleibt gewählt"; continue; fi
+                if [ "${sel[$f]}" = 1 ]; then sel[$f]=0; else sel[$f]=1; fi
+            done
+        done
+    fi
+    for f in "${ORDER[@]}"; do
+        if [ "${sel[$f]}" = 1 ] && ! installed "$f"; then add+=("$f"); fi
+        if [ "${sel[$f]}" = 0 ] && { installed "$f" || partial "$f"; }; then del+=("$f"); fi
+    done
+    if [ ${#add[@]} -eq 0 ] && [ ${#del[@]} -eq 0 ]; then say "Keine Änderung."; return 0; fi
+    [ ${#del[@]} -gt 0 ] && { do_remove "${del[@]}" || return 1; }
+    [ ${#add[@]} -gt 0 ] && do_install "${add[@]}"
+}
+
+# ------------------------------------------------------------------ Ablauf
+mkdir -p "$KI_DIR/basis/logs"
+LOG="$KI_DIR/basis/logs/setup-$(date +%Y%m%d-%H%M%S).log"
+cmd=${1:-select}
+[ $# -gt 0 ] && shift
+case $cmd in
+    list|status|files) ;;
+    *) exec > >(tee -a "$LOG") 2>&1 ;;
+esac
+case $cmd in
+    select)     do_select ;;
+    list|status) do_list "$@" ;;
+    install)    [ $# -gt 0 ] || { err "Aufruf: ./setup install <funktion…>"; exit 2; }; do_install "$@" ;;
+    remove)     [ $# -gt 0 ] || { err "Aufruf: ./setup remove <funktion…>"; exit 2; }; do_remove "$@" ;;
+    reinstall)  [ $# -gt 0 ] || exit 2; YES=1 KEEP=1 do_remove "$@" && do_install "$@" ;;
+    files)      do_files "$@" ;;
+    update)     do_update ;;
+    remove-all)
+        REMOVE_ALL=1
+        mapfile -t all < <(for f in "${ORDER[@]}"; do if installed "$f" || partial "$f"; then echo "$f"; fi; done)
+        [ ${#all[@]} -eq 0 ] && { say "Nichts installiert."; exit 0; }
+        do_remove "${all[@]}" && say "Zum Schluss noch das Repo löschen: rm -rf $REPO  (~/projects und ~/shared_data bleiben)" ;;
+    *) err "Unbekannter Befehl: $cmd (./setup --help)"; exit 2 ;;
+esac

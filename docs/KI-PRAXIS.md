@@ -19,7 +19,7 @@ Was auf dieser Hardware gut geht, was nicht, und wie man die 6 GB VRAM und 16 GB
 ## Workflow
 
 ```bash
-ki new bilder --profile ml --torch     # Projekt mit PyTorch (CUDA-Bibliotheken kommen mit, kein Toolkit nötig)
+ki new bilder --vorlage ml --torch     # Projekt mit PyTorch (CUDA-Bibliotheken kommen mit, kein Toolkit nötig)
 ki shell bilder                        # Terminal im Kerker
 python gpu_check.py                    # GPU, VRAM, fp16-Leistung
 exit
@@ -28,8 +28,9 @@ ki logs bilder                         # mitlesen (Strg+C stoppt Mitlaufen, q be
 ki stop bilder                         # wie Strg+C – die Vorlage speichert und setzt später fort
 ```
 
-Beim Training PyCharm schließen spart 1,5–2 GB RAM; geschrieben wird währenddessen mit dem Zweitrechner
-(`ki jupyter`, oder VS Code/PyCharm per SSH auf `~/projects/<p>/code`).
+Beim Training PyCharm schließen spart 1,5–2 GB RAM. Die Leiste unten meldet das Ende des Jobs
+(„✓ bilder fertig“ oder „✗ bilder Fehler“). Notebooks: `ki jupyter` – Browser auf dem Zweitrechner
+per SSH-Tunnel (Funktion `fernzugriff`).
 
 ## Sprachmodelle laufen lassen (Inferenz)
 
@@ -41,14 +42,15 @@ Beim Training PyCharm schließen spart 1,5–2 GB RAM; geschrieben wird während
 
 Ohne Systemdienst und ohne Modelle außerhalb der Projekte:
 
-- **llama.cpp über Python:** `uv pip install llama-cpp-python` (CUDA-Build laut dessen Doku), Modell als
-  GGUF nach `~/shared_data/models/` legen und per Pfad laden.
+- **llama.cpp über Python:** `uv pip install llama-cpp-python` (CUDA-Build laut dessen Doku; braucht
+  die Funktion `cuda`), Modell als GGUF nach `~/shared_data/models/` legen und per Pfad laden.
 - **Ollama im Kerker:** Linux-Archiv in ein Projekt entpacken, `OLLAMA_MODELS` in `.ki/env` auf einen
   Ordner im Projekt setzen, `ollama serve` per `ki run` starten – läuft nur, solange der Job läuft.
 - **Hugging Face Transformers:** `device_map="auto"` und `load_in_4bit` (bitsandbytes) für 7B-Modelle.
 
-Modelle, die mehrere Projekte brauchen, einmal auf dem Host nach `~/shared_data/models/` laden statt
-in jedes Projekt-`HF_HOME`.
+Modelle, die mehrere Projekte brauchen, einmal nach `~/shared_data/models/` legen (z. B. per USB-Stick
+über `ki usb` und den Dateimanager) statt in jedes Projekt-`HF_HOME`. Offline laden mit
+`HF_HUB_OFFLINE=1` in `~/projects/<p>/.ki/env`.
 
 ## Wenn es eng wird
 
@@ -56,6 +58,6 @@ in jedes Projekt-`HF_HOME`.
   selten. VRAM-Spitze mit `torch.cuda.max_memory_allocated()` messen (die Vorlage zeigt sie an).
 - **Prozess plötzlich weg, Log endet abrupt:** earlyoom hat bei RAM-Mangel eingegriffen
   (`journalctl -u earlyoom`). `num_workers` senken, Datensätze streamen statt komplett laden.
-- **GUI ruckelt beim Training:** Bildschirm auf die iGPU legen (SYSTEM.md, Abschnitt 4.7).
+- **GUI ruckelt beim Training:** Bildschirm auf die iGPU legen (`ki setup install igpu`, SYSTEM.md Abschnitt 6).
 - **Jeder CUDA-Start dauert Sekunden:** Persistence Mode prüfen (`ki doctor`).
 - **Langer Lauf, CPU als Flaschenhals** (Datenvorbereitung): `ki power performance`, danach `balanced`.

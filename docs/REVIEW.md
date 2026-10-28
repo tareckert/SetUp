@@ -1,5 +1,10 @@
 # Design-Review der KI-Workstation (v1 → v2)
 
+> **Historisch.** Dieses Review führte zu v2. Für die Neuinstallation wurde daraus v3: `bootstrap.sh`
+> und `install.sh` sind durch `./setup` mit einzeln installier- und entfernbaren Funktionen ersetzt,
+> PyCharm liegt in `/opt/ki/pycharm`, Einstellungen in `~/.ki/<funktion>`, `ki migrate` und
+> `run-project.sh` entfallen. Aktuell: [SYSTEM.md](SYSTEM.md).
+
 Grundlage: „KI-Workstation – Systemdokumentation“ vom 28.10.2026 (22 Seiten, Stand v1).
 Ziel des Reviews: mehr RAM, CPU und GPU fürs Rechnen, ein stabileres und bequemeres System –
 ohne die vier Kernziele in ihrer Rangfolge (Zero-Garbage, Stabilität, Performance, Bedienkomfort)

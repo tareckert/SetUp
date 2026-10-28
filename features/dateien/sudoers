@@ -1,0 +1,2 @@
+# /etc/sudoers.d/ki-dateien – KI-Workstation (Funktion dateien): USB-Sticks ein-/aushängen
+@USER@ ALL=(root) NOPASSWD: /opt/ki/dateien/ki-mount

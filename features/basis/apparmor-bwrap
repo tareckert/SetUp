@@ -1,0 +1,8 @@
+# /etc/apparmor.d/ki-bwrap – erlaubt bubblewrap User-Namespaces (Ubuntu sperrt sie sonst)
+abi <abi/4.0>,
+include <tunables/global>
+
+profile ki-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/ki-bwrap>
+}

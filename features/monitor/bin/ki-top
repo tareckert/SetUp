@@ -1,0 +1,5 @@
+#!/bin/sh
+# ki top [cpu] – nvtop für die GPU (Standard) oder htop. Ihre Einstellungen landen in ~/.ki/monitor.
+export XDG_CONFIG_HOME="$HOME/.ki/monitor"
+if [ "${1:-}" = cpu ] || ! command -v nvtop >/dev/null 2>&1; then exec htop; fi
+exec nvtop

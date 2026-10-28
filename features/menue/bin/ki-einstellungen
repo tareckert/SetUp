@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# ki einstellungen – Systemeinstellungen als Dialog. Alles wird nur beim Ändern und beim Start
+# der Oberfläche angewendet; nichts läuft im Hintergrund.
+set -uo pipefail
+REPO=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../.." && pwd)
+KI="$REPO/features/basis/bin/ki"
+# shellcheck source=core/ui.sh
+. "$REPO/core/ui.sh"
+trap ':' INT
+CONF="$HOME/.ki/oberflaeche/einstellungen.conf"
+GUI=0; [ -n "${DISPLAY:-}" ] && GUI=1
+has() { [ -f "$HOME/.ki/$1/.installed" ]; }
+
+conf_get() { ( # shellcheck disable=SC2034  # Vorgaben, falls die Datei fehlt
+               DPI=96 SCHRIFT=11 SCHONER=10 TASTATUR="" WIEDERHOLUNG="250 40" BILDSCHIRM="" AUTOSTART=ja
+               # shellcheck source=/dev/null
+               [ -f "$CONF" ] && . "$CONF"; printf '%s' "${!1}" ); }
+conf_set() {   # Wert ersetzen, Kommentar am Zeilenende bleibt
+    mkdir -p "${CONF%/*}"; touch "$CONF"
+    if grep -q "^$1=" "$CONF"; then sed -i -E "s|^($1=)\"[^\"]*\"|\\1\"$2\"|" "$CONF"
+    else printf '%s="%s"\n' "$1" "$2" >> "$CONF"; fi
+}
+apply() { [ $GUI = 1 ] && "$KI" anzeige anwenden >/dev/null 2>&1; return 0; }
+
+monitor_dialog() {
+    local outs=() modes=() o sel primary second="" pos old new
+    mapfile -t outs < <(xrandr --query 2>/dev/null | awk '/ connected/ {print $1}')
+    [ ${#outs[@]} -gt 0 ] || { say_err "Kein Bildschirm gefunden (xrandr)."; pause; return; }
+    old=$(conf_get BILDSCHIRM)
+    if [ ${#outs[@]} -eq 1 ]; then
+        o=${outs[0]}
+        mapfile -t modes < <(xrandr --query | awk -v o="$o" '$1 == o {f = 1; next} /^[^ ]/ {f = 0} f {print $1}' | awk '!s[$0]++')
+        sel=$(ui_choose "Auflösung für $o" "Automatisch (empfohlen)" "${modes[@]}") || return
+        if [[ $sel == Automatisch* ]]; then new=""; else new="--output $o --mode $sel"; fi
+    else
+        primary=$(ui_choose "Hauptbildschirm (mit Menü und Leiste)" "${outs[@]}") || return
+        for o in "${outs[@]}"; do [ "$o" != "$primary" ] && { second=$o; break; }; done
+        pos=$(ui_choose "Wo steht $second?" "rechts daneben" "links daneben" "darüber" "gleicher Inhalt (gespiegelt)" "aus") || return
+        new="--output $primary --auto --primary --output $second"
+        case $pos in
+            rechts*)  new+=" --auto --right-of $primary" ;;
+            links*)   new+=" --auto --left-of $primary" ;;
+            darüber)  new+=" --auto --above $primary" ;;
+            gleicher*) new+=" --auto --same-as $primary" ;;
+            aus)      new+=" --off" ;;
+        esac
+    fi
+    # Ausprobieren – ohne Bestätigung nach 15 Sekunden zurück (schützt vor schwarzem Bild)
+    # shellcheck disable=SC2086
+    xrandr ${new:---auto}
+    if ui_confirm "Bild in Ordnung? Ohne Antwort geht es in 15 s zurück." no 15; then
+        conf_set BILDSCHIRM "$new"; say_ok "Gespeichert – gilt auch nach dem Neustart."
+        [ -n "$second" ] && say_ok "Tipp: Win+O schiebt eine Arbeitsfläche, Win+Shift+O ein Fenster auf den anderen Monitor."
+        pause
+    else
+        # shellcheck disable=SC2086
+        xrandr ${old:---auto}
+    fi
+}
+
+scale_dialog() {
+    local cur sel
+    cur=$(conf_get DPI)
+    sel=$(ui_choose "Skalierung (jetzt $((cur * 100 / 96)) %) – gilt für neue Fenster" \
+        "100 %  (96 dpi)" "125 %  (120 dpi)" "150 %  (144 dpi)" "175 %  (168 dpi)" "200 %  (192 dpi)") || return
+    sel=${sel#*(}; conf_set DPI "${sel%% *}"; apply
+    say_ok "Neue Fenster nutzen die Skalierung; PyCharm beim nächsten Start, Leiste nach Win+Shift+R."; pause
+}
+
+font_dialog() {
+    local sel
+    sel=$(ui_choose "Schriftgröße im Terminal (jetzt $(conf_get SCHRIFT))" 9 10 11 12 13 14 16 18) || return
+    conf_set SCHRIFT "$sel"; apply
+    printf '\e]710;xft:JetBrains Mono:size=%s,xft:DejaVu Sans Mono:size=%s\a' "$sel" "$sel"   # dieses Fenster sofort
+}
+
+screensaver_dialog() {
+    local sel
+    sel=$(ui_choose "Bildschirm ausschalten nach … (jetzt $(conf_get SCHONER) Min, 0 = nie)" \
+        "nie" "5 Minuten" "10 Minuten" "30 Minuten" "60 Minuten") || return
+    case $sel in nie) sel=0 ;; *) sel=${sel%% *} ;; esac
+    conf_set SCHONER "$sel"; apply
+}
+
+keyboard_dialog() {
+    local sel
+    sel=$(ui_choose "Tastatur" "Layout: Deutsch (de)" "Layout: Schweiz (ch)" "Layout: Österreich (at)" \
+        "Layout: Englisch (us)" "Layout: wie Konsole" "Wiederholung: gemächlich" "Wiederholung: normal" \
+        "Wiederholung: schnell" "Zurück") || return
+    case $sel in
+        *"(de)") conf_set TASTATUR de ;;
+        *"(ch)") conf_set TASTATUR ch ;;
+        *"(at)") conf_set TASTATUR at ;;
+        *"(us)") conf_set TASTATUR us ;;
+        *Konsole) conf_set TASTATUR "" ;;
+        *gemächlich) conf_set WIEDERHOLUNG "500 25" ;;
+        *normal) conf_set WIEDERHOLUNG "250 40" ;;
+        *schnell) conf_set WIEDERHOLUNG "200 60" ;;
+        *) return ;;
+    esac
+    apply
+}
+
+autostart_dialog() {
+    if [ "$(conf_get AUTOSTART)" = ja ]; then
+        ui_confirm "Oberfläche startet nach dem Login automatisch. Abschalten (dann: ki start)?" no &&
+            conf_set AUTOSTART nein
+    else
+        ui_confirm "Oberfläche nach dem Login wieder automatisch starten?" && conf_set AUTOSTART ja
+    fi
+}
+
+timezone_dialog() {
+    local cur sel
+    cur=$(timedatectl show -p Timezone --value 2>/dev/null)
+    sel=$(timedatectl list-timezones 2>/dev/null | ui_filter "Zeitzone (jetzt ${cur:-?}) – tippen, z. B. Berlin") || return
+    [ -n "$sel" ] || return
+    clear_screen
+    sudo timedatectl set-timezone "$sel" && say_ok "Zeitzone: $sel"
+    pause
+}
+
+pycharm_mem_dialog() {
+    local sel
+    sel=$(ui_choose "PyCharm-Speicher (Heap) – mehr hilft bei großen Projekten, fehlt aber dem Training" \
+        "1024 MB (sparsam)" "1536 MB" "2048 MB (empfohlen)" "3072 MB" "4096 MB") || return
+    clear_screen; "$KI" pycharm speicher "${sel%% *}"; pause
+}
+
+cpu_dialog() {
+    local cur sel
+    cur=$("$KI" power status 2>/dev/null)
+    sel=$(ui_choose "CPU-Modus (jetzt $cur)" "ausgewogen – Standard, taktet bei Last trotzdem hoch" \
+        "Leistung – volle Taktrate für lange Trainings (wärmer, lauter)") || return
+    clear_screen
+    case $sel in ausgewogen*) "$KI" power balanced ;; *) "$KI" power performance ;; esac || pause
+}
+
+features_dialog() {
+    local rows=() pre="" name inst core title row sel want=() add=() del=() n
+    if [ $HAVE_GUM = 0 ]; then clear_screen; "$REPO/setup"; pause; return; fi
+    while IFS=$'\t' read -r name inst core title _; do
+        [ "$core" = 1 ] && continue
+        row=$(printf '%-12s %s' "$name" "$title")
+        rows+=("$row")
+        [ "$inst" = 1 ] && pre+="$row|"
+    done < <("$REPO/setup" list --porcelain)
+    sel=$(ui_multi "Funktionen – Leertaste = an/aus, Enter = übernehmen, Esc = abbrechen" "$pre" "${rows[@]}") || return
+    while read -r n _; do [ -n "$n" ] && want+=("$n"); done <<< "$sel"
+    for row in "${rows[@]}"; do
+        n=${row%% *}
+        if grep -qxF -- "$n" <<< "$(printf '%s\n' "${want[@]}")"; then has "$n" || add+=("$n")
+        else has "$n" && del+=("$n"); fi
+    done
+    if [ ${#add[@]} -eq 0 ] && [ ${#del[@]} -eq 0 ]; then say_ok "Keine Änderung."; pause; return; fi
+    clear_screen
+    [ ${#del[@]} -gt 0 ] && "$REPO/setup" remove "${del[@]}"
+    [ ${#add[@]} -gt 0 ] && "$REPO/setup" install "${add[@]}"
+    say_ok "Neue Befehle stehen sofort bereit; Oberflächen-Änderungen wirken nach Win+Shift+R oder Neustart."
+    pause
+}
+
+while :; do
+    clear_screen
+    ui_box "Einstellungen"
+    items=()
+    if has oberflaeche; then
+        [ $GUI = 1 ] && items+=("Bildschirm: Auflösung & zweiter Monitor")
+        items+=("Skalierung ($(( $(conf_get DPI) * 100 / 96 )) %)" "Schriftgröße im Terminal ($(conf_get SCHRIFT))"
+                "Bildschirm aus nach ($(conf_get SCHONER) Min)" "Tastatur"
+                "Oberfläche automatisch starten ($(conf_get AUTOSTART))")
+    fi
+    items+=("Zeitzone")
+    has pycharm && items+=("PyCharm-Speicher")
+    has menue && items+=("CPU-Modus")
+    items+=("Funktionen verwalten (installieren / entfernen)" "Zurück")
+    c=$(ui_choose "" "${items[@]}") || exit 0
+    case $c in
+        Bildschirm:*)   monitor_dialog ;;
+        Skalierung*)    scale_dialog ;;
+        Schrift*)       font_dialog ;;
+        "Bildschirm aus"*) screensaver_dialog ;;
+        Tastatur)       keyboard_dialog ;;
+        Oberfläche*)    autostart_dialog ;;
+        Zeitzone)       timezone_dialog ;;
+        PyCharm*)       pycharm_mem_dialog ;;
+        CPU*)           cpu_dialog ;;
+        Funktionen*)    features_dialog ;;
+        *)              exit 0 ;;
+    esac
+done

@@ -1,0 +1,2 @@
+# /etc/sudoers.d/ki-menue – KI-Workstation (Funktion menue): nur diese Befehle ohne Passwort
+@USER@ ALL=(root) NOPASSWD: /opt/ki/menue/ki-power, /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot

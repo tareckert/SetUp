@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# ki pycharm – PyCharm installieren, aktualisieren, aufräumen, Speicher einstellen
+#
+#   ki pycharm update [datei|link]   neue Version nach /opt/ki/pycharm/<version>, "current" umstellen
+#   ki pycharm versionen             installierte Versionen
+#   ki pycharm aufraeumen            alte Versionen löschen (die aktuelle bleibt)
+#   ki pycharm speicher <MB>         Heap-Obergrenze (-Xmx), z. B. 2048
+set -uo pipefail
+shopt -s nullglob
+KI_ROOT=${KI_ROOT:-}
+SUDO=${SUDO-sudo}
+BASE="$KI_ROOT/opt/ki/pycharm"
+CONF="$HOME/.ki/pycharm/config"
+die() { printf '✘ %s\n' "$*" >&2; exit 1; }
+info() { printf '› %s\n' "$*"; }
+
+latest() {   # "Download-Link Prüfsummen-Link" der aktuellen Version
+    curl -fsS --max-time 20 'https://data.services.jetbrains.com/products/releases?code=PCP&latest=true&type=release' 2>/dev/null |
+        python3 -c '
+import json, sys
+release = next(iter(json.load(sys.stdin).values()))[0]
+linux = release["downloads"]["linux"]
+print(linux["link"], linux.get("checksumLink", ""))' 2>/dev/null
+}
+
+install() {
+    local src=${1:-} sum="" tmp file top want have
+    if pgrep -u "$(id -u)" -f "$BASE/" >/dev/null 2>&1; then die "Erst PyCharm schließen."; fi
+    mkdir -p "$HOME/.ki/pycharm"
+    tmp=$(mktemp -d "$HOME/.ki/pycharm/download.XXXXXX") || die "Kein Platz für den Download"
+    trap 'rm -rf "$tmp"' EXIT
+    if [ -z "$src" ]; then
+        info "Frage aktuelle Version bei JetBrains ab …"
+        read -r src sum < <(latest)
+        [ -n "$src" ] || die "Keine Version gefunden (offline?). Archiv von https://www.jetbrains.com/pycharm/download/ (Linux, .tar.gz) per USB holen: ki pycharm update <datei>"
+    fi
+    case $src in
+        http://*|https://*)
+            file="$tmp/${src##*/}"
+            info "Lade ${src##*/} …"
+            curl -fL --progress-bar -o "$file" "$src" || die "Download fehlgeschlagen"
+            want=$(curl -fsS --max-time 20 "${sum:-$src.sha256}" 2>/dev/null | awk '{print $1}')
+            if [ -n "$want" ]; then
+                have=$(sha256sum "$file" | awk '{print $1}')
+                [ "$want" = "$have" ] || die "Prüfsumme stimmt nicht – Download beschädigt"
+                info "Prüfsumme in Ordnung"
+            fi ;;
+        *)  [ -f "$src" ] || die "Datei nicht gefunden: $src"; file=$src ;;
+    esac
+    top=$(tar -tzf "$file" 2>/dev/null | head -n1 | cut -d/ -f1)
+    [[ $top == pycharm-* ]] || die "Kein PyCharm-Archiv: $file"
+    $SUDO mkdir -p "$BASE" || die "kann $BASE nicht anlegen"
+    if [ -d "$BASE/$top" ]; then info "$top ist schon entpackt"
+    else
+        info "Entpacke nach /opt/ki/pycharm/$top …"
+        $SUDO tar -xzf "$file" -C "$BASE" || die "Entpacken fehlgeschlagen"
+    fi
+    $SUDO ln -sfn "$top" "$BASE/current" || die "kann current nicht setzen"
+    info "PyCharm: $top"
+    local all=("$BASE"/pycharm-*/)
+    if [ ${#all[@]} -gt 1 ]; then
+        info "Ältere Versionen nach dem Test entfernen: ki pycharm aufraeumen"
+    fi
+}
+
+versionen() {
+    local cur d; cur=$(readlink "$BASE/current" 2>/dev/null)
+    for d in "$BASE"/pycharm-*/; do
+        d=${d%/}; d=${d##*/}
+        if [ "$d" = "$cur" ]; then printf '  %s  (aktuell)\n' "$d"; else printf '  %s\n' "$d"; fi
+    done
+}
+
+aufraeumen() {
+    local cur d n=0; cur=$(readlink "$BASE/current" 2>/dev/null)
+    [ -n "$cur" ] || die "Keine aktuelle Version gesetzt"
+    for d in "$BASE"/pycharm-*/; do
+        d=${d%/}
+        [ "${d##*/}" = "$cur" ] && continue
+        $SUDO rm -rf "$d" && n=$((n + 1)) && info "entfernt: ${d##*/}"
+    done
+    [ $n = 0 ] && info "Keine alten Versionen."
+    return 0
+}
+
+speicher() {
+    local mb=${1:-} dd f
+    [[ $mb =~ ^[0-9]{3,5}$ ]] || die "Aufruf: ki pycharm speicher <MB>, z. B. 2048"
+    dd=$(sed -n 's/.*"dataDirectoryName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$BASE/current/product-info.json" 2>/dev/null | head -n1)
+    [ -n "$dd" ] || die "PyCharm nicht gefunden"
+    f="$CONF/$dd/pycharm64.vmoptions"
+    mkdir -p "${f%/*}"
+    if [ -f "$f" ] && grep -q '^-Xmx' "$f"; then sed -i "s/^-Xmx.*/-Xmx${mb}m/" "$f"
+    else printf -- '-Xmx%sm\n' "$mb" >> "$f"; fi
+    info "PyCharm-Speicher: ${mb} MB (wirkt beim nächsten Start)"
+}
+
+case ${1:-} in
+    install|update) shift; install "$@" ;;
+    versionen)      versionen ;;
+    aufraeumen)     aufraeumen ;;
+    speicher)       shift; speicher "$@" ;;
+    *)              sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

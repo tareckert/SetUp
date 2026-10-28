@@ -1,0 +1,12 @@
+#!/bin/sh
+# ki start – Oberfläche starten (von tty1 automatisch, sonst von Hand auf der Konsole)
+D=$(dirname "$(dirname "$(readlink -f "$0")")")
+S="$HOME/.ki/oberflaeche"
+if [ -n "${DISPLAY:-}" ]; then echo "Die Oberfläche läuft schon."; exit 0; fi
+mkdir -p "$S"
+# X-Cookie im RAM statt ~/.Xauthority
+export XAUTHORITY="${XDG_RUNTIME_DIR:-/tmp}/ki-Xauthority"
+startx "$D/xinitrc" >"$S/xsession.log" 2>&1
+rc=$?
+printf '\n  Oberfläche beendet (Code %s) – Log: ~/.ki/oberflaeche/xsession.log\n  Neu starten: ki start\n\n' "$rc"
+exit "$rc"

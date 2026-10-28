@@ -1,0 +1,10 @@
+#!/bin/sh
+# ki dateien [ordner…] – Dateimanager (Midnight Commander). Alle seine Dateien liegen in ~/.ki/dateien.
+# Ohne Terminal (z. B. Win+D) öffnet er ein eigenes Fenster auf der Extra-Arbeitsfläche.
+if [ ! -t 0 ] && [ -n "${DISPLAY:-}" ]; then
+    exec urxvt -name ki-extra -title Dateien -e "$0" "$@"
+fi
+export MC_PROFILE_ROOT="$HOME/.ki/dateien"
+if [ "$(tput colors 2>/dev/null || echo 8)" -ge 256 ]; then skin=modarin256-defbg; else skin=default; fi
+[ $# -gt 0 ] || set -- "$HOME/projects" "$HOME/shared_data"
+exec mc -S "$skin" "$@"

@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# tests/stub – Attrappe für Systembefehle im Test (apt-get, systemctl, curl …).
+# Wird als Symlink unter dem Namen des Befehls aufgerufen; Zustand in $STUB_STATE.
+# Jeder Aufruf landet in $STUB_STATE/calls.log.
+set -uo pipefail
+S=${STUB_STATE:?}
+name=${0##*/}
+printf '%s %s\n' "$name" "$*" >> "$S/calls.log"
+touch "$S/installed" "$S/manual" "$S/enabled" "$S/swaps"
+
+add()    { grep -qxF -- "$2" "$S/$1" || echo "$2" >> "$S/$1"; }
+del()    { grep -vxF -- "$2" "$S/$1" > "$S/$1.tmp"; mv "$S/$1.tmp" "$S/$1"; }
+has()    { grep -qxF -- "$2" "$S/$1"; }
+
+case $name in
+    apt-get)
+        args=(); for a in "$@"; do case $a in -*|DEBIAN_FRONTEND=*) ;; *) args+=("$a") ;; esac; done
+        case ${args[0]:-} in
+            install) for p in "${args[@]:1}"; do add installed "$p"; add manual "$p"; add byapt "$p"; done ;;
+            purge|remove) for p in "${args[@]:1}"; do del installed "$p"; del manual "$p"; done ;;
+            autoremove) touch "$S/byapt"
+                        while read -r p; do has manual "$p" || del installed "$p"; done < "$S/byapt" ;;
+        esac ;;
+    apt-mark)
+        case ${1:-} in
+            showmanual) sort "$S/manual" ;;
+            auto) shift; for p in "$@"; do del manual "$p"; done ;;
+        esac ;;
+    apt-cache)
+        case ${1:-} in
+            policy) echo "  Candidate: 1.0" ;;
+            show) exit 0 ;;
+        esac ;;
+    dpkg-query) p=${!#}; has installed "$p" && printf 'install ok installed' ;;
+    systemctl)
+        args=(); for a in "$@"; do case $a in --now|--quiet|-q) ;; *) args+=("$a") ;; esac; done
+        case ${args[0]:-} in
+            is-enabled) if has enabled "${args[1]}"; then echo enabled; else echo disabled; exit 1; fi ;;
+            is-active) exit 1 ;;
+            enable) add enabled "${args[1]}" ;;
+            disable) del enabled "${args[1]}" ;;
+        esac ;;
+    swapon)
+        case ${1:-} in
+            --show*) while read -r d; do [ -n "$d" ] && printf '%s file\n' "$d"; done < "$S/swaps" ;;
+            -a) awk '!/^#/ && $3 == "swap" {print $1}' "${KI_ROOT:-}/etc/fstab" 2>/dev/null |
+                    while read -r d; do add swaps "$d"; done ;;
+        esac ;;
+    swapoff) del swaps "$1" ;;
+    nvidia-smi)
+        case "$*" in
+            *-L*) echo "GPU 0: NVIDIA GeForce RTX 2060 (UUID: test)" ;;
+            *) echo "NVIDIA GeForce RTX 2060, 595.91.07, Enabled, Disabled, 5" ;;
+        esac ;;
+    i3status) echo 'CPU 01% | RAM 1.0 GiB/15.6 GiB' ;;
+    lspci) echo "0000:00:02.0 0300: 8086:5912 (rev 04)" ;;
+    visudo|sysctl|apparmor_parser|mkswap|ubuntu-drivers|gpg|timedatectl|i3-msg) exit 0 ;;
+    curl)
+        out="" url=""
+        while [ $# -gt 0 ]; do
+            case $1 in -o) out=$2; shift ;; -*) ;; *) url=$1 ;; esac
+            shift
+        done
+        fix="$S/fixtures"; mkdir -p "$fix"
+        case $url in
+            *astral-sh/uv/*.tar.gz)
+                d="$fix/uvbuild/uv-x86_64-unknown-linux-gnu"; mkdir -p "$d"
+                printf '#!/bin/sh\necho "uv 0.0.0-test"\n' > "$d/uv"; cp "$d/uv" "$d/uvx"; chmod +x "$d/uv" "$d/uvx"
+                tar -czf "$fix/uv.tgz" -C "$fix/uvbuild" uv-x86_64-unknown-linux-gnu
+                cp "$fix/uv.tgz" "$out" ;;
+            *astral-sh/uv/*.sha256)
+                (cd "$fix" && printf '%s  uv-x86_64-unknown-linux-gnu.tar.gz\n' "$(sha256sum uv.tgz | cut -d' ' -f1)") > "$out" ;;
+            *data.services.jetbrains.com*)
+                echo '{"PCP":[{"downloads":{"linux":{"link":"https://download.example/pycharm-2099.1.tar.gz","checksumLink":"https://download.example/pycharm-2099.1.tar.gz.sha256"}}}]}' ;;
+            *pycharm-2099.1.tar.gz)
+                d="$fix/pcbuild/pycharm-2099.1"; mkdir -p "$d/bin"
+                cp "${STUB_PYCHARM:?}" "$d/bin/pycharm"; chmod +x "$d/bin/pycharm"
+                echo '{"dataDirectoryName": "PyCharm2099.1", "version": "2099.1"}' > "$d/product-info.json"
+                tar -czf "$fix/pc.tgz" -C "$fix/pcbuild" pycharm-2099.1
+                cp "$fix/pc.tgz" "$out" ;;
+            *pycharm-2099.1.tar.gz.sha256)
+                sha256sum "$fix/pc.tgz" | cut -d' ' -f1 ;;
+            *) exit 22 ;;
+        esac ;;
+    *) echo "stub: unbekannt: $name" >&2; exit 1 ;;
+esac
+exit 0

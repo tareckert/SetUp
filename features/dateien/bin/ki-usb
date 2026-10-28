@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# ki usb – USB-Sticks einbinden und auswerfen (Dialog). Ohne Dialog:
+#   ki usb liste | ki usb einbinden <gerät> | ki usb auswerfen <gerät>
+set -uo pipefail
+REPO=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../.." && pwd)
+# shellcheck source=core/ui.sh
+. "$REPO/core/ui.sh"
+HELPER=/opt/ki/dateien/ki-mount
+km() { sudo -n "$HELPER" "$@"; }
+
+case ${1:-} in
+    liste|einbinden|auswerfen) km "$@"; exit ;;
+esac
+
+rows=()
+while IFS=$'\t' read -r dev size label fs mp; do
+    if [ -n "$mp" ]; then rows+=("$(printf '%-10s %-8s %-16s eingebunden: %s' "${dev#/dev/}" "$size" "$label" "$mp")")
+    else rows+=("$(printf '%-10s %-8s %-16s %s' "${dev#/dev/}" "$size" "$label" "$fs")"); fi
+done < <(km liste 2>/dev/null)
+if [ ${#rows[@]} -eq 0 ]; then
+    say_err "Kein USB-Stick gefunden. Einstecken und erneut versuchen."
+    pause; exit 0
+fi
+choice=$(ui_choose "USB-Datenträger" "${rows[@]}") || exit 0
+dev="/dev/${choice%% *}"
+if [[ $choice == *"eingebunden:"* ]]; then
+    mp=${choice##*eingebunden: }
+    c=$(ui_choose "$dev ist eingebunden" "Im Dateimanager öffnen" "Auswerfen (sicher entfernen)" "Zurück") || exit 0
+    case $c in
+        Im*)      "$REPO/features/dateien/bin/ki-dateien" "$mp" "$HOME/projects" ;;
+        Auswerfen*) if km auswerfen "$dev"; then say_ok "Kann jetzt abgezogen werden."; fi; pause ;;
+    esac
+else
+    if mp=$(km einbinden "$dev"); then
+        say_ok "Eingebunden unter $mp"
+        ui_confirm "Im Dateimanager öffnen?" && "$REPO/features/dateien/bin/ki-dateien" "$mp" "$HOME/projects"
+    else pause; fi
+fi

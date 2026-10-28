@@ -1,0 +1,34 @@
+#!/bin/sh
+# ki statusbar – Statuszeile für i3bar: Jobs (laufend / gerade fertig), GPU, dann i3status.
+# Läuft im Takt von i3status (10 s); liest nur Dateien und fragt nvidia-smi einmal ab.
+D=$(dirname "$(dirname "$(readlink -f "$0")")")
+KI_PROJECTS="$HOME/projects"
+# shellcheck source=/dev/null
+[ -f "$HOME/.ki/basis/ki.conf" ] && . "$HOME/.ki/basis/ki.conf"
+
+jobs() {
+    n=0 fertig=""
+    now=$(date +%s)
+    for f in "$KI_PROJECTS"/*/.ki/jobs/*.pid; do
+        [ -f "$f" ] && kill -0 "$(cat "$f" 2>/dev/null)" 2>/dev/null && n=$((n + 1))
+    done
+    # In den letzten 15 Minuten beendete Jobs: ✓ fertig / ✗ Fehler
+    for f in "$KI_PROJECTS"/*/.ki/jobs/*.exit; do
+        [ -f "$f" ] || continue
+        [ $((now - $(stat -c %Y "$f"))) -lt 900 ] || continue
+        p=${f%/.ki/jobs/*}; p=${p##*/}
+        if [ "$(cat "$f")" = 0 ]; then fertig="$fertig✓ $p fertig | "; else fertig="$fertig✗ $p Fehler | "; fi
+    done
+    [ "$n" -gt 0 ] && printf 'Jobs %s | ' "$n"
+    printf "%s" "$fertig"
+}
+gpu() {
+    command -v nvidia-smi >/dev/null 2>&1 || return
+    nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu \
+        --format=csv,noheader,nounits 2>/dev/null |
+        awk -F', *' 'NR==1 {printf "GPU %s%% %.1f/%.0fG %s°C | ", $1, $2/1024, $3/1024, $4}'
+}
+
+i3status -c "$D/i3status.conf" | while IFS= read -r line; do
+    printf '%s%s%s\n' "$(jobs)" "$(gpu)" "$line"
+done

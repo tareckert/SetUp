@@ -1,0 +1,8 @@
+#!/bin/sh
+# oberflaeche/xinitrc – von "ki start" an startx übergeben
+D=$(dirname "$(readlink -f "$0")")
+S="$HOME/.ki/oberflaeche"
+xrdb -merge "$D/Xresources"                                   # Farben vor dem ersten Fenster (B2)
+[ -f "$S/eigene.Xresources" ] && xrdb -merge "$S/eigene.Xresources"
+"$D/bin/ki-anzeige" anwenden                                  # Bildschirme, Skalierung, Tastatur, Schoner
+exec i3 -c "$D/i3.conf"

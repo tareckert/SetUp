@@ -1,0 +1,358 @@
+#!/usr/bin/env bash
+# ki menu – Hauptmenü der KI-Workstation (Arbeitsfläche "Menü", auch per SSH oder auf der Konsole)
+#
+# Reine Oberfläche: jede Aktion erledigt "ki". Ohne Bildschirm (SSH, Konsole) blendet das Menü
+# alles aus, was die Oberfläche braucht. Bedienung: Pfeile + Enter, Esc = zurück.
+set -uo pipefail
+REPO=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../.." && pwd)
+KI="$REPO/features/basis/bin/ki"
+# shellcheck source=core/ui.sh
+. "$REPO/core/ui.sh"
+trap ':' INT                       # Strg+C beendet das laufende Programm, nie das Menü
+printf '\e]2;KI-Menü\a'
+
+GUI=0; [ -n "${DISPLAY:-}" ] && GUI=1
+S_IDE="" S_LAST="" S_JOBS=0 S_POWER="" S_FEATURES="" S_PROJECTS="$HOME/projects"
+S_WS_IDE="2:IDE" S_WS_EXTRA="3:Extra"
+load_state() {
+    local k v
+    while IFS='=' read -r k v; do
+        case $k in
+            ide) S_IDE=$v ;; last) S_LAST=$v ;; jobs) S_JOBS=$v ;; power) S_POWER=$v ;;
+            features) S_FEATURES=" $v" ;; projects) S_PROJECTS=$v ;;
+            ws_ide) S_WS_IDE=$v ;; ws_extra) S_WS_EXTRA=$v ;;
+        esac
+    done < <("$KI" _state 2>/dev/null)
+}
+has() { [[ $S_FEATURES == *" $1 "* ]]; }
+i3ws() { [ $GUI = 1 ] && i3-msg -q workspace "$1" >/dev/null 2>&1; return 0; }
+can_ide() { [ $GUI = 1 ] && has pycharm; }
+
+draw_header() {
+    local l2 l3="" ram gpu disk age
+    load_state
+    ram=$(free -m | awk '/^Mem:/ {printf "RAM %.1f/%.0f G", $3/1024, $2/1024}')
+    gpu=$(nvidia-smi --query-gpu=memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null |
+          awk -F', *' 'NR==1 {printf "GPU %.1f/%.0f G %s°C", $1/1024, $2/1024, $3}')
+    disk=$(df -h --output=avail / 2>/dev/null | awk 'NR==2 {print "SSD " $1 " frei"}')
+    l2="$ram   ${gpu:+$gpu   }$disk"
+    [ -n "$S_IDE" ] && l3+="PyCharm: ${S_IDE//,/, }   "
+    [ "${S_JOBS:-0}" -gt 0 ] && l3+="Jobs aktiv: $S_JOBS   "
+    [ "$S_POWER" = Leistung ] && l3+="CPU: Leistung   "
+    [ -e /var/run/reboot-required ] && l3+="Neustart nötig   "
+    if [ -f /var/cache/apt/pkgcache.bin ]; then
+        age=$(( ($(date +%s) - $(stat -c %Y /var/cache/apt/pkgcache.bin)) / 86400 ))
+        [ $age -ge 14 ] && l3+="Update fällig ($age Tage)   "
+    fi
+    [ -z "$S_LAST" ] && l3+="Los geht's: Neues Projekt anlegen"
+    [ $GUI = 0 ] && l3+="(ohne Oberfläche)"
+    clear_screen
+    ui_box "KI-Workstation · $(hostname -s) · $(date '+%a %d.%m. %H:%M')" "$l2" "${l3%   }"
+}
+
+# ------------------------------------------------------------------ Projekte wählen
+pick_project() {   # $1 Überschrift, $2 = size → mit Größen → Projektname
+    local header=$1 rows=() args=(--porcelain) name prof last st sz line choice profs
+    if [ "${2:-}" = size ]; then args+=(--size); printf '%sBerechne Größen …\n' "$INDENT" >&2; fi
+    while IFS=$'\t' read -r name prof last st sz; do
+        case $prof in ml) profs="KI/ML" ;; node) profs="Node" ;; *) profs="Python" ;; esac
+        printf -v line '%-24s %-7s %-13s %6s  %s' "$name" "$profs" "$(rel "$last")" "$sz" "$st"
+        rows+=("${line%"${line##*[! ]}"}")
+    done < <("$KI" list "${args[@]}" 2>/dev/null)
+    if [ ${#rows[@]} = 0 ]; then say_err "Noch keine Projekte – im Hauptmenü \"Neues Projekt\" wählen."; pause; return 1; fi
+    if [ ${#rows[@]} -gt 12 ]; then choice=$(printf '%s\n' "${rows[@]}" | ui_filter "$header") || return 1
+    else choice=$(ui_choose "$header" "${rows[@]}") || return 1; fi
+    printf '%s\n' "${choice%% *}"
+}
+rel() {
+    local s=$(( $(date +%s) - $1 ))
+    if   [ $s -lt 120 ];    then echo "gerade eben"
+    elif [ $s -lt 3600 ];   then echo "vor $((s / 60)) Min"
+    elif [ $s -lt 86400 ];  then echo "vor $((s / 3600)) Std"
+    elif [ $s -lt 172800 ]; then echo "gestern"
+    elif [ $s -lt 604800 ]; then echo "vor $((s / 86400)) Tg"
+    else date -d "@$1" '+%d.%m.%Y'
+    fi
+}
+
+# ------------------------------------------------------------------ Aktionen
+run_open() {
+    local out
+    if [ -n "$S_IDE" ] && [[ ",$S_IDE," != *",$1,"* ]]; then
+        ui_confirm "PyCharm ist schon offen ($S_IDE). Zweites Fenster mit '$1' öffnen? (+1,5–2 GB RAM)" || return
+    fi
+    if ! out=$("$KI" open "$1" 2>&1); then clear_screen; printf '%s\n' "$out" >&2; pause; fi
+}
+run_shell() { clear_screen; "$KI" shell "$1"; }
+
+new_project() {
+    local how name tmpl rows=() t d torch=() next url src
+    how=$(ui_choose "Neues Projekt" "Aus einer Vorlage" "Aus einem Git-Repo klonen" "Vorhandenen Ordner übernehmen (z. B. USB-Stick)" "Zurück") || return
+    case $how in
+        "Aus einem Git"*)
+            url=$(ui_input "Adresse des Git-Repos" "https://github.com/…") || return
+            [ -n "$url" ] || return
+            ui_confirm "Pakete aus requirements.txt gleich installieren?" && torch=(--install)
+            clear_screen; "$KI" clone "$url" "${torch[@]}" || pause
+            return ;;
+        Vorhandenen*)
+            # Ordner auf eingebundenen USB-Sticks direkt anbieten, sonst Pfad eingeben
+            rows=()
+            for d in /media/ki/*/ /media/ki/*/*/; do [ -d "$d" ] && rows+=("${d%/}"); done
+            if [ ${#rows[@]} -gt 0 ]; then
+                src=$(ui_choose "Welchen Ordner übernehmen?" "${rows[@]}" "Anderen Pfad eingeben" "Zurück") || return
+                [ "$src" = Zurück ] && return
+            else
+                say_ok "Tipp: USB-Stick vorher unter \"Dateien & USB\" einbinden – dann steht er hier zur Auswahl."
+                src="Anderen Pfad eingeben"
+            fi
+            if [ "$src" = "Anderen Pfad eingeben" ]; then
+                src=$(ui_input "Pfad des Ordners" "/media/ki/STICK/meinprojekt") || return
+            fi
+            [ -d "$src" ] || { say_err "Kein Ordner: $src"; pause; return; }
+            name=$(ui_input "Projektname" "a-z A-Z 0-9 - _" "$(basename "$src" | tr -c 'A-Za-z0-9_\n-' '-')") || return
+            clear_screen; "$KI" import "$src" "$name"; pause
+            return ;;
+        "Aus einer"*) ;;
+        *) return ;;
+    esac
+    while :; do
+        name=$(ui_input "Name des neuen Projekts" "z. B. bilderkennung  (a-z A-Z 0-9 - _)") || return
+        [ -n "$name" ] || return
+        [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]] && break
+        say_err "Erlaubt sind a-z A-Z 0-9 - _ (nicht am Anfang), max. 64 Zeichen."
+    done
+    while IFS=$'\t' read -r t d; do rows+=("$(printf '%-10s %s' "$t" "$d")"); done < <("$KI" new --vorlagen)
+    tmpl=$(ui_choose "Vorlage für $name" "${rows[@]}") || return
+    tmpl=${tmpl%% *}
+    if [ "$tmpl" = ml ] && ui_confirm "PyTorch gleich installieren? (einmalig ca. 3 GB Download)"; then torch=(--torch); fi
+    clear_screen
+    "$KI" new "$name" --vorlage "$tmpl" "${torch[@]}" || { pause; return; }
+    if can_ide; then
+        next=$(ui_choose "Projekt $name ist bereit – wie weiter?" "In PyCharm öffnen" "Terminal im Projekt" "Zurück zum Menü") || return
+    else
+        next=$(ui_choose "Projekt $name ist bereit – wie weiter?" "Terminal im Projekt" "Zurück zum Menü") || return
+    fi
+    case $next in
+        "In PyCharm"*) run_open "$name" ;;
+        Terminal*)     run_shell "$name" ;;
+    esac
+}
+
+start_job() {
+    local p last cmd c
+    p=$(pick_project "Job starten in …") || return
+    last=$("$KI" _lastcmd "$p" 2>/dev/null)
+    cmd=$(ui_input "Befehl im Kerker (Ordner ~/code) – läuft im Hintergrund weiter" "python train.py" "${last:-python train.py}") || return
+    [ -n "$cmd" ] || return
+    clear_screen
+    "$KI" run "$p" --sh "$cmd" || { pause; return; }
+    c=$(ui_choose "Job gestartet – die Leiste unten meldet das Ende" "Log live ansehen (Strg+C stoppt Mitlaufen, q beendet)" "Zurück") || return
+    [[ $c == Log* ]] && "$KI" logs "$p"
+}
+
+show_jobs() {
+    local rows=() p id st cmd line c
+    while IFS=$'\t' read -r p id st cmd; do
+        printf -v line '%-16s %-20s %-12s %s' "$id" "$p" "$st" "${cmd:0:50}"
+        rows+=("$line")
+    done < <("$KI" jobs --porcelain 2>/dev/null | sort -t$'\t' -k2,2r)
+    if [ ${#rows[@]} = 0 ]; then say_err "Noch keine Jobs."; pause; return; fi
+    c=$(ui_choose "Jobs (neueste zuerst)" "${rows[@]}") || return
+    read -r id p st _ <<< "$c"
+    if [ "$st" = "läuft" ]; then
+        c=$(ui_choose "Job $id in $p" "Log live ansehen" "Stoppen (Strg+C an das Programm, Checkpoint möglich)" "Zurück") || return
+    else
+        c=$(ui_choose "Job $id in $p ($st)" "Log ansehen" "Zurück") || return
+    fi
+    case $c in
+        Log*)   "$KI" logs "$p" "$id" ;;
+        Stopp*) clear_screen; "$KI" stop "$p" "$id"; pause ;;
+    esac
+}
+
+start_jupyter() {
+    local p
+    p=$(pick_project "JupyterLab starten für …") || return
+    if [ $GUI = 1 ]; then
+        # Eigenes Fenster auf der Extra-Arbeitsfläche, das Menü bleibt frei
+        urxvt -name ki-extra -title "Jupyter $p" -e sh -c \
+            '"$0" jupyter "$1"; printf "\nEnter = Fenster schließen"; read -r _' "$KI" "$p" >/dev/null 2>&1 &
+        i3ws "$S_WS_EXTRA"
+    else
+        clear_screen; "$KI" jupyter "$p"; pause
+    fi
+}
+
+clean_dialog() {   # $1 Projekt
+    local rows=() name sz sel names=()
+    while IFS=$'\t' read -r name sz; do rows+=("$(printf '%-16s %s' "$name" "$sz")"); done < <("$KI" caches "$1")
+    if [ ${#rows[@]} = 0 ]; then say_err "Keine Caches in $1."; pause; return; fi
+    sel=$(ui_multi "Welche Caches leeren? Leertaste = auswählen, Enter = los" "" "${rows[@]}") || return
+    [ -n "$sel" ] || return
+    while read -r name _; do names+=("$name"); done <<< "$sel"
+    clear_screen; "$KI" clean "$1" "${names[@]}"; pause
+}
+
+project_actions() {   # $1 Projekt
+    local p=$1 c new items=()
+    while :; do
+        items=()
+        can_ide && items+=("In PyCharm öffnen")
+        items+=("Terminal im Projekt")
+        has dateien && items+=("Im Dateimanager öffnen")
+        items+=("Job-Logs")
+        can_ide && items+=("PyCharm-Log")
+        items+=("Cache leeren …" "Umbenennen" "Löschen" "Zurück")
+        c=$(ui_choose "Projekt $p" "${items[@]}") || return
+        case $c in
+            "In PyCharm"*) run_open "$p"; return ;;
+            Terminal*)     run_shell "$p" ;;
+            "Im Datei"*)   "$KI" dateien "$S_PROJECTS/$p/code" ;;
+            Job-Logs)      "$KI" logs "$p" 2>/dev/null || { say_err "Noch keine Jobs."; pause; } ;;
+            PyCharm-Log)   less -R +G "$S_PROJECTS/$p/.ki/ide.log" 2>/dev/null || { say_err "Noch kein PyCharm-Log."; pause; } ;;
+            Cache*)        clean_dialog "$p" ;;
+            Umbenennen)    new=$(ui_input "Neuer Name für $p" "a-z A-Z 0-9 - _" "$p") || continue
+                           if [ -z "$new" ] || [ "$new" = "$p" ]; then continue; fi
+                           if "$KI" mv "$p" "$new"; then p=$new; else pause; fi ;;
+            Löschen)       ui_confirm "Projekt $p mit Code, .venv, Caches und Modellen endgültig löschen?" no || continue
+                           clear_screen; "$KI" rm "$p" --yes; pause; return ;;
+            *)             return ;;
+        esac
+    done
+}
+
+# ------------------------------------------------------------------ Untermenüs
+jobs_menu() {
+    local c items
+    while :; do
+        draw_header
+        items=("Job starten" "Jobs ansehen" "JupyterLab starten")
+        has monitor && items+=("GPU-Monitor (q = zurück)")
+        has menue && items+=("CPU-Modus: $S_POWER → umschalten")
+        items+=("Zurück")
+        c=$(ui_choose "Training & Jobs" "${items[@]}") || return
+        case $c in
+            "Job starten")  start_job ;;
+            "Jobs ansehen") show_jobs ;;
+            JupyterLab*)    start_jupyter ;;
+            GPU*)           "$KI" top ;;
+            CPU*)           clear_screen
+                            if [ "$S_POWER" = Leistung ]; then "$KI" power balanced; else "$KI" power performance; fi || pause ;;
+            *)              return ;;
+        esac
+    done
+}
+
+manage_menu() {
+    local c p
+    while :; do
+        draw_header
+        c=$(ui_choose "Projekte verwalten" "Projekt auswählen (mit Größe)" "Alle Caches leeren" "Zurück") || return
+        case $c in
+            Projekt*)  p=$(pick_project "Projekt" size) && project_actions "$p" ;;
+            "Alle C"*) ui_confirm "Caches aller Projekte leeren? (pip, uv, Hugging Face, PyCharm-Index …)" no &&
+                           { clear_screen; "$KI" clean --all; pause; } ;;
+            *)         return ;;
+        esac
+    done
+}
+
+files_menu() {
+    local c
+    while :; do
+        draw_header
+        c=$(ui_choose "Dateien & USB" "Dateimanager öffnen" "USB-Stick einbinden / auswerfen" "Zurück") || return
+        case $c in
+            Dateimanager*) "$KI" dateien ;;
+            USB*)          "$KI" usb ;;
+            *)             return ;;
+        esac
+    done
+}
+
+system_update() {
+    clear_screen
+    printf '%sSystem aktualisieren (sudo-Passwort nötig)\n\n' "$INDENT" >&2
+    sudo apt update && sudo apt full-upgrade
+    printf '\n' >&2
+    if command -v nvidia-smi >/dev/null 2>&1 && ! nvidia-smi -L >/dev/null 2>&1; then
+        say_err "nvidia-smi antwortet nicht – nach dem Neustart erneut prüfen (Treiber wird per DKMS gebaut)."
+    fi
+    [ -e /var/run/reboot-required ] && say_err "Neustart nötig, damit Kernel/Treiber aktiv werden."
+    pause
+}
+
+system_menu() {
+    local c items
+    while :; do
+        draw_header
+        items=("Status" "Diagnose und Dateileichen-Suche" "System aktualisieren (apt)" "Setup aktualisieren (Git)")
+        has pycharm && items+=("PyCharm aktualisieren")
+        items+=("Host-Terminal (sudo, apt)" "Handbuch lesen" "Neu starten" "Zurück")
+        c=$(ui_choose "System" "${items[@]}") || return
+        case $c in
+            Status)        clear_screen; "$KI" status; pause ;;
+            Diagnose*)     clear_screen; "$KI" doctor; pause ;;
+            "System a"*)   system_update ;;
+            "Setup a"*)    clear_screen; "$KI" update; pause ;;
+            PyCharm*)      clear_screen; "$KI" pycharm update; pause ;;
+            Host*)         clear_screen
+                           printf 'Host-Shell – hier wirken sudo und apt. exit = zurück zum Menü\n\n' >&2
+                           bash -i ;;
+            Handbuch*)     handbook ;;
+            "Neu starten") ui_confirm "Rechner neu starten?" no && { sudo -n systemctl reboot 2>/dev/null || systemctl reboot; } ;;
+            *)             return ;;
+        esac
+    done
+}
+
+handbook() {   # Doku offline lesen
+    local docs=() d c
+    for d in "$REPO"/README.md "$REPO"/docs/*.md; do docs+=("${d#"$REPO"/}"); done
+    c=$(ui_choose "Handbuch" "${docs[@]}" "Zurück") || return
+    [ -f "$REPO/$c" ] && ui_pager < "$REPO/$c"
+}
+
+power_off() {
+    local warn=""
+    [ -n "$S_IDE" ] && warn="PyCharm ist noch offen. "
+    [ "${S_JOBS:-0}" -gt 0 ] && warn+="$S_JOBS Job(s) laufen noch. "
+    ui_confirm "${warn}Rechner ausschalten?" no || return
+    sudo -n systemctl poweroff 2>/dev/null || systemctl poweroff
+}
+
+# ------------------------------------------------------------------ Hauptschleife
+main_menu() {
+    local items c p
+    while :; do
+        draw_header
+        items=()
+        if [ -n "$S_IDE" ] && [ $GUI = 1 ]; then items+=("▶ Zu PyCharm (${S_IDE//,/, })")
+        elif [ -n "$S_LAST" ] && can_ide; then items+=("▶ Weiter mit $S_LAST")
+        elif [ -n "$S_LAST" ]; then items+=("▶ Terminal in $S_LAST")
+        fi
+        can_ide && items+=("Projekt öffnen")
+        items+=("Neues Projekt" "Terminal im Projekt" "Training & Jobs" "Projekte verwalten")
+        has dateien && items+=("Dateien & USB")
+        items+=("Einstellungen" "System" "Hilfe & Tasten" "Ausschalten")
+        c=$(ui_choose "" "${items[@]}") || continue
+        case $c in
+            "▶ Zu PyCharm"*)    i3ws "$S_WS_IDE" ;;
+            "▶ Weiter mit"*)    run_open "$S_LAST" ;;
+            "▶ Terminal in"*)   run_shell "$S_LAST" ;;
+            "Projekt öffnen")   p=$(pick_project "In PyCharm öffnen") && run_open "$p" ;;
+            "Neues Projekt")    new_project ;;
+            "Terminal im"*)     p=$(pick_project "Terminal im Kerker – ohne IDE, spart 1,5–2 GB RAM") && run_shell "$p" ;;
+            Training*)          jobs_menu ;;
+            "Projekte v"*)      manage_menu ;;
+            Dateien*)           files_menu ;;
+            Einstellungen)      "$KI" einstellungen ;;
+            System)             system_menu ;;
+            Hilfe*)             "$KI" help | ui_pager ;;
+            Ausschalten)        power_off ;;
+        esac
+    done
+}
+
+main_menu

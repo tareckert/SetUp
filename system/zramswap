@@ -1,6 +1,0 @@
-# /etc/default/zramswap – KI-Workstation
-# Komprimierter Swap im RAM (zstd, typisch 3:1). Bei 16 GB entspricht das bis zu ~8 GB
-# zusätzlichem Platz für ruhende Seiten (IDE, Browser-lose Dienste), ohne die SSD zu belasten.
-ALGO=zstd
-PERCENT=50
-PRIORITY=100

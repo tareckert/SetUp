@@ -1,0 +1,29 @@
+#!/bin/sh
+# ki anzeige anwenden – Einstellungen aus ~/.ki/oberflaeche/einstellungen.conf auf die laufende
+# Oberfläche anwenden. Läuft beim Start einmal und nach jeder Änderung im Menü – nie im Hintergrund.
+S="$HOME/.ki/oberflaeche/einstellungen.conf"
+DPI=96 SCHRIFT=11 SCHONER=10 TASTATUR="" WIEDERHOLUNG="250 40" BILDSCHIRM=""
+# shellcheck source=/dev/null
+[ -f "$S" ] && . "$S"
+[ -n "${DISPLAY:-}" ] || { echo "ki anzeige: keine Oberfläche"; exit 1; }
+
+case ${1:-anwenden} in
+    anwenden) ;;
+    *) echo "Aufruf: ki anzeige anwenden"; exit 2 ;;
+esac
+
+if [ -n "$BILDSCHIRM" ]; then
+    # shellcheck disable=SC2086  # Argumentliste für xrandr
+    xrandr $BILDSCHIRM 2>/dev/null || xrandr --auto
+fi
+printf 'Xft.dpi: %s\nURxvt*font: xft:JetBrains Mono:size=%s,xft:DejaVu Sans Mono:size=%s\n' \
+    "$DPI" "$SCHRIFT" "$SCHRIFT" | xrdb -merge
+if [ "$SCHONER" -gt 0 ] 2>/dev/null; then
+    t=$((SCHONER * 60)); xset s "$t" "$t"; xset +dpms dpms "$t" "$t" "$t"
+else
+    xset s off; xset -dpms
+fi
+[ -n "$TASTATUR" ] && setxkbmap "$TASTATUR"
+# shellcheck disable=SC2086
+[ -n "$WIEDERHOLUNG" ] && xset r rate $WIEDERHOLUNG
+exit 0
