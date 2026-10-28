@@ -54,7 +54,12 @@ case $name in
         esac ;;
     i3status) echo 'CPU 01% | RAM 1.0 GiB/15.6 GiB' ;;
     lspci) echo "0000:00:02.0 0300: 8086:5912 (rev 04)" ;;
-    visudo|sysctl|apparmor_parser|mkswap|ubuntu-drivers|gpg|timedatectl|i3-msg) exit 0 ;;
+    i3-msg)
+        case "$*" in
+            *get_workspaces*) cat "$S/i3_workspaces" 2>/dev/null || echo '[{"name":"1:Menü","focused":true}]' ;;
+            *get_tree*)       cat "$S/i3_tree" 2>/dev/null || echo '{}' ;;
+        esac ;;
+    visudo|sysctl|apparmor_parser|mkswap|ubuntu-drivers|gpg|timedatectl|urxvt) exit 0 ;;
     curl)
         out="" url=""
         while [ $# -gt 0 ]; do

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# tests/run.sh – Prüfungen ohne Root, ohne X, ohne Internet:
+# tests/run.sh – Prüfungen ohne Root, ohne echten Bildschirm, ohne Internet:
 #   1. statisch: Syntax, shellcheck, i3-Konfiguration, Python
 #   2. Setup-Kreislauf in einem Schein-System: alle Funktionen installieren, benutzen,
 #      wieder entfernen – danach muss alles exakt wie vorher sein (keine Dateileichen)
 #   3. Kerker mit echtem bubblewrap: Umgebung, Isolation, Jobs, Vorlagen, clone/import,
-#      zwei PyCharm-Fenster (Schein-PyCharm), Restarter (B8)
+#      zwei PyCharm-Fenster (Schein-PyCharm), Restarter (B8), Fenster-Logik
+#   4. echte Oberfläche auf virtuellem Bildschirm (Xvfb): Menü, Fenster nebeneinander, einzeln
+#      schließen, zurück zum Menü – falls Xvfb, i3 und urxvt installiert sind
+#   5. alles entfernen und mit dem Ausgangszustand vergleichen
 set -uo pipefail
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 KI="$REPO/features/basis/bin/ki"
@@ -18,10 +21,11 @@ cd "$REPO" || exit 1
 echo "1. Statische Prüfungen"
 BASH_FILES=(setup core/lib.sh core/ui.sh features/*/feature.sh features/basis/bin/ki features/menue/bin/ki-menu
             features/menue/bin/ki-einstellungen features/dateien/bin/ki-usb features/pycharm/bin/ki-pycharm
-            tests/run.sh tests/stub)
+            features/oberflaeche/bin/ki-fenster tests/run.sh tests/stub)
 SH_FILES=(features/basis/login.sh features/oberflaeche/start.sh features/oberflaeche/xinitrc
           features/oberflaeche/bin/ki-start features/oberflaeche/bin/ki-anzeige features/oberflaeche/bin/ki-statusbar
-          features/dateien/bin/ki-dateien features/monitor/bin/ki-top features/menue/ki-power)
+          features/dateien/bin/ki-dateien features/monitor/bin/ki-top features/menue/ki-power
+          features/oberflaeche/bin/ki-menuschleife)
 for f in "${BASH_FILES[@]}"; do check "bash -n $f" bash -n "$f"; done
 for f in "${SH_FILES[@]}"; do check "sh -n $f" sh -n "$f"; done
 if command -v shellcheck >/dev/null 2>&1; then
@@ -54,9 +58,10 @@ export STUB_PYCHARM="$T/fake-pycharm" KI_TEST_IDE_SLEEP=3
 unset DISPLAY XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME SSH_AUTH_SOCK KI_PROJECT KI_USE_UV
 mkdir -p "$T/bin" "$STUB_STATE" "$HOME" "$XDG_RUNTIME_DIR"
 for c in apt-get apt-mark apt-cache dpkg-query systemctl swapon swapoff nvidia-smi lspci visudo sysctl \
-         apparmor_parser mkswap ubuntu-drivers gpg timedatectl curl i3-msg i3status; do
+         apparmor_parser mkswap ubuntu-drivers gpg timedatectl curl i3-msg i3status urxvt; do
     ln -s "$REPO/tests/stub" "$T/bin/$c"
 done
+ORIG_PATH=$PATH
 export PATH="$T/bin:$PATH"
 # Schein-System: wie ein frisches Ubuntu Server minimized
 R=$KI_ROOT
@@ -154,6 +159,27 @@ mkdir -p "$P/demo/.system_cache/pip/x" && echo 1 > "$P/demo/.system_cache/pip/x/
 check "ki clean" "$KI" clean demo pip
 check "Cache leer, Ordner bleibt" test -d "$P/demo/.system_cache/pip" -a ! -e "$P/demo/.system_cache/pip/x"
 
+# Fenster: Terminal und Dateien nebeneinander, jedes einzeln schließbar
+calls() { cat "$STUB_STATE/calls.log" 2>/dev/null; }
+check "ki terminal ohne Oberfläche läuft hier" bash -c "echo 'echo hallo-\$KI_PROJECT' | '$KI' terminal demo | grep -qx hallo-demo"
+: > "$STUB_STATE/calls.log"
+DISPLAY=:99 "$KI" terminal demo; sleep 1
+check "Terminal-Fenster vom Menü aus → Fläche Extra" grep -qx 'i3-msg -q workspace 3:Extra' <(calls)
+check "Terminal-Fenster startet ki shell demo" grep -q '^urxvt -title Terminal demo -e .*ki-fenster _innen .*/ki shell demo$' <(calls)
+echo '[{"name":"2:IDE","focused":true}]' > "$STUB_STATE/i3_workspaces"; : > "$STUB_STATE/calls.log"
+DISPLAY=:99 "$KI" dateien --fenster; sleep 1
+check "Dateien von IDE aus → bleibt daneben auf derselben Fläche" bash -c "! grep -q 'i3-msg -q workspace' '$STUB_STATE/calls.log'"
+check "Dateien-Fenster startet mc-Aufruf" grep -q '^urxvt -title Dateien -e .*ki-fenster _innen .*/ki-dateien$' <(calls)
+rm -f "$STUB_STATE/i3_workspaces"
+F="$REPO/features/oberflaeche/bin/ki-fenster"
+echo '{"nodes":[{"type":"workspace","name":"3:Extra","nodes":[{"window":42,"focused":true}]}]}' > "$STUB_STATE/i3_tree"
+: > "$STUB_STATE/calls.log"; DISPLAY=:99 WINDOWID=42 "$F" _innen true
+check "letztes Fenster zu → zurück zum Menü" grep -qx 'i3-msg -q workspace 1:Menü' <(calls)
+echo '{"nodes":[{"type":"workspace","name":"3:Extra","nodes":[{"window":42,"focused":true},{"window":43}]}]}' > "$STUB_STATE/i3_tree"
+: > "$STUB_STATE/calls.log"; DISPLAY=:99 WINDOWID=42 "$F" _innen true
+check "anderes Fenster bleibt offen → kein Sprung" bash -c "! grep -q 'i3-msg -q workspace' '$STUB_STATE/calls.log'"
+rm -f "$STUB_STATE/i3_tree"
+
 # Eigene Vorlage
 mkdir -p "$HOME/.ki/basis/vorlagen/meine" && echo "# Meine Vorlage" > "$HOME/.ki/basis/vorlagen/meine/README.md"
 echo ml > "$HOME/.ki/basis/vorlagen/meine/profil"; echo 'print(1)' > "$HOME/.ki/basis/vorlagen/meine/start.py"
@@ -187,7 +213,45 @@ check "ki rm" "$KI" rm eigen2 --yes
 check "ki doctor läuft durch" bash -c "'$KI' doctor >/dev/null 2>&1; [ \$? -le 1 ]"
 check "Funktionsbefehl erreichbar (ki pycharm versionen)" bash -c "'$KI' pycharm versionen | grep -q 2099.1"
 
-echo "4. Alles entfernen – keine Dateileichen"
+echo "4. Echte Oberfläche: i3 + urxvt auf virtuellem Bildschirm"
+if command -v Xvfb >/dev/null && command -v i3 >/dev/null && command -v urxvt >/dev/null && command -v xset >/dev/null; then
+    (
+        export PATH="$REPO/features/basis/bin:$ORIG_PATH" DISPLAY=:97
+        Xvfb :97 -screen 0 1920x1080x24 >/dev/null 2>&1 & xv=$!
+        for _ in $(seq 20); do xset q >/dev/null 2>&1 && break; sleep 0.25; done
+        i3 -c "$REPO/features/oberflaeche/i3.conf" >"$T/i3.log" 2>&1 & i3p=$!
+        # shellcheck disable=SC2317  # win/shown laufen über waitfor (eval)
+        win() {   # "fläche|titel|x|breite" je Fenster
+            i3-msg -t get_tree 2>/dev/null | python3 -c '
+import json, sys
+def walk(n, ws=None):
+    if n.get("type") == "workspace": ws = n["name"]
+    if n.get("window") and ws != "__i3_scratch" and ws: print("%s|%s|%s|%s" % (ws, n.get("name"), n["rect"]["x"], n["rect"]["width"]))
+    for k in n.get("nodes", []) + n.get("floating_nodes", []): walk(k, ws)
+walk(json.load(sys.stdin))'; }
+        # shellcheck disable=SC2317
+        shown() { i3-msg -t get_workspaces | python3 -c 'import json,sys; print(next(w["name"] for w in json.load(sys.stdin) if w["focused"]))'; }
+        # shellcheck disable=SC2317  # wird über check aufgerufen
+        waitfor() { for _ in $(seq 40); do eval "$1" >/dev/null 2>&1 && return 0; sleep 0.25; done; return 1; }
+        check "Menü-Fenster erscheint auf der Fläche Menü" waitfor 'win | grep -q "^1:Menü|"'
+        ki fenster --titel FensterA -- sleep 60
+        check "Fenster vom Menü aus → Fläche Extra, Vollbild" waitfor 'win | grep -q "^3:Extra|FensterA|0|1920$"'
+        ki fenster --titel FensterB -- sleep 60
+        check "zweites Fenster teilt den Bildschirm (je 960 px)" waitfor 'win | grep -q "^3:Extra|FensterA|0|960$" && win | grep -q "^3:Extra|FensterB|960|960$"'
+        i3-msg -q '[title="FensterA"] kill'
+        check "einzeln geschlossen – das andere füllt den Bildschirm" waitfor 'win | grep -q "^3:Extra|FensterB|0|1920$" && ! win | grep -q FensterA'
+        i3-msg -q '[title="FensterB"] kill'
+        ki fenster --titel FensterC -- sleep 1
+        check "nach dem letzten Fenster zurück zum Menü" waitfor '[ "$(shown)" = "1:Menü" ] && ! win | grep -q FensterC'
+        check "Statusleiste und Menü ohne Fehler gestartet" bash -c "! grep -qi 'syntax error' '$T/i3.log'"
+        i3-msg -q exit >/dev/null 2>&1; kill "$i3p" "$xv" 2>/dev/null; wait 2>/dev/null
+        exit "$FAIL"
+    ) || FAIL=1
+else
+    echo "  –      Xvfb/i3/urxvt/xset nicht installiert – übersprungen"
+fi
+
+echo "5. Alles entfernen – keine Dateileichen"
 check "setup remove-all" ./setup remove-all
 for f in "${ALL[@]}"; do [ -e "$HOME/.ki/$f" ] && nok "~/.ki/$f ist noch da"; done
 check "/opt/ki weg" test ! -e "$R/opt/ki"

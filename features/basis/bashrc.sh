@@ -8,7 +8,7 @@ _ki_complete() {
         mapfile -t COMPREPLY < <(compgen -W "$(ki _commands 2>/dev/null)" -- "$cur")
     elif [ "$COMP_CWORD" -eq 2 ]; then
         case ${COMP_WORDS[1]} in
-            open|shell|run|jobs|logs|stop|jupyter|clean|rm|mv|caches)
+            open|shell|terminal|term|run|jobs|logs|stop|jupyter|clean|rm|mv|caches)
                 projects=$(ki _projects 2>/dev/null)
                 mapfile -t COMPREPLY < <(compgen -W "$projects" -- "$cur") ;;
             power) mapfile -t COMPREPLY < <(compgen -W "performance balanced" -- "$cur") ;;

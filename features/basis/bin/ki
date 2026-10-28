@@ -518,6 +518,29 @@ cmd_shell() {
     kerker_run "$name" shell "$@"
 }
 
+# Terminal im eigenen Fenster: in der Oberfläche neben dem aktuellen Fenster (ki fenster),
+# ohne Oberfläche (Konsole, SSH) einfach hier. Ohne Projekt: erst eines wählen.
+cmd_terminal() {
+    local p=${1:-} fenster="$REPO/features/oberflaeche/bin/ki-fenster"
+    [ -n "$p" ] && need_project "$p"
+    if [ -n "${DISPLAY:-}" ] && has oberflaeche; then
+        if [ -n "$p" ]; then exec "$fenster" --titel "Terminal $p" -- "$SELF" shell "$p"; fi
+        exec "$fenster" --titel Terminal -- "$SELF" _terminal_wahl
+    fi
+    if [ -n "$p" ]; then cmd_shell "$p"; else cmd__terminal_wahl; fi
+}
+cmd__terminal_wahl() {
+    local rows=("Host – ohne Projekt (sudo, apt)") n c
+    # shellcheck source=core/ui.sh
+    . "$REPO/core/ui.sh"
+    while IFS= read -r n; do rows+=("$n"); done < <(projects_by_use)
+    c=$(printf '%s\n' "${rows[@]}" | ui_filter "Terminal für … (tippen filtert)") || exit 0
+    case $c in
+        Host*) exec bash -i ;;
+        ?*)    cmd_shell "$c" ;;
+    esac
+}
+
 cmd_run() {
     local name=${1:-} id dir label
     need_project "$name"; shift
@@ -861,7 +884,7 @@ feature_cmd() {   # gibt den Pfad eines Funktions-Befehls aus, wenn die Funktion
 }
 cmd__commands() {
     local f
-    echo "new clone import open shell run jobs logs stop jupyter list clean rm mv status doctor power setup update help"
+    echo "new clone import open shell terminal run jobs logs stop jupyter list clean rm mv status doctor power setup update help"
     for f in "$REPO"/features/*/bin/ki-*; do
         has "$(basename "$(dirname "$(dirname "$f")")")" && basename "$f" | sed 's/^ki-//'
     done
@@ -877,6 +900,7 @@ ${C_B}Projekte${C_0}
   ki import <ordner> [name]               vorhandenen Code übernehmen, z. B. vom USB-Stick
   ki open <name>              PyCharm im Kerker; ein zweites Projekt öffnet ein zweites Fenster
   ki shell <name> [befehl…]   Terminal/Befehl im Kerker, ohne IDE (spart 1,5–2 GB RAM)
+  ki terminal [name]          dasselbe im eigenen Fenster neben dem aktuellen (Win+T)
   ki list [--size]   ki clean <name> [ordner…] | --all   ki mv <alt> <neu>   ki rm <name>
   Eigene Vorlagen: Ordner nach ~/.ki/basis/vorlagen/<name>/ legen (optional Datei "profil": ml|py|node)
 
@@ -894,15 +918,18 @@ ${C_B}Funktionen & System${C_0}
 EOF
     has menue && echo "  ki menu                     Menü (startet in der Oberfläche automatisch)"
     has oberflaeche && echo "  ki start                    Oberfläche von der Konsole starten"
+    has oberflaeche && echo "  ki fenster [befehl]         Befehl in neuem Fenster neben dem aktuellen"
     has dateien && echo "  ki dateien [ordner]   ki usb   Dateimanager, USB-Sticks"
     has monitor && echo "  ki top [cpu]                GPU-/CPU-Monitor"
     has pycharm && echo "  ki pycharm update|versionen|aufraeumen|speicher <MB>"
     cat <<EOF
 
 ${C_B}Tasten${C_0} (Win = Super-Taste – Alt bleibt für PyCharm frei)
-  Win+1 Menü · Win+2 IDE · Win+3 Extra · Win+Tab zurück · Win+Enter Terminal · Win+D Dateien
-  Win+G GPU-Monitor · Win+Shift+Q Fenster schließen · Win+F Vollbild · Win+Shift+R i3 neu laden
-  Zwei Projekte: Win+E nebeneinander/untereinander · Win+W Reiter · Win+R Größe (Pfeile, Enter)
+  Win+1 Menü · Win+2 IDE · Win+3 Extra · Win+Tab zurück · Win+F Vollbild · Win+Shift+R i3 neu laden
+  Neue Fenster (öffnen sich neben dem aktuellen, jedes schließt einzeln):
+    Win+T Terminal im Projekt · Win+Enter Terminal (Host) · Win+D Dateien · Win+G GPU-Monitor
+  Fenster: Win+Pfeil wechseln · Win+Shift+Pfeil tauschen · Win+Shift+Q schließen
+    Win+E nebeneinander/untereinander · Win+W Reiter · Win+R Größe (Pfeile, Enter)
   Zweiter Monitor: Win+O Arbeitsfläche hinüber · Win+Shift+O Fenster hinüber
   Terminal: Strg+Bild↑/↓ Schriftgröße · Strg+Shift+C/V kopieren/einfügen
 
@@ -926,6 +953,8 @@ case $cmd in
     import)          cmd_import "$@" ;;
     open)            cmd_open "$@" ;;
     shell|sh)        cmd_shell "$@" ;;
+    terminal|term)   cmd_terminal "$@" ;;
+    _terminal_wahl)  cmd__terminal_wahl ;;
     run)             cmd_run "$@" ;;
     jobs)            cmd_jobs "$@" ;;
     logs|log)        cmd_logs "$@" ;;

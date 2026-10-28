@@ -75,7 +75,7 @@ GRUB-Menü fehlt – am Bootloader ändert dieses Setup nichts.
 | `oberflaeche` | ja | Xorg + i3 + urxvt, Statusleiste mit GPU und Jobs |
 | `autologin` | ja | ohne Passwort direkt ins Menü |
 | `menue` | ja | Textmenü mit Einstellungen; Ausschalten und CPU-Modus ohne Passwort |
-| `pycharm` | ja | PyCharm, im Kerker gestartet; mehrere Fenster möglich |
+| `pycharm` | ja | PyCharm, im Kerker gestartet |
 | `dateien` | ja | Dateimanager (Midnight Commander) und USB-Sticks |
 | `monitor` | ja | nvtop (GPU) und htop (CPU/RAM) |
 | `igpu` | nein | Bildschirm über die Intel-Grafik – volles VRAM für CUDA (Monitor ans Mainboard) |
@@ -107,19 +107,26 @@ Was eine Funktion angelegt hat: `ki setup files <name>`. Alles entfernen: `ki se
 | Projekt anlegen | Neues Projekt | `ki new bilder --vorlage ml --torch` |
 | Git-Repo als Projekt | Neues Projekt → Git | `ki clone https://github.com/… --install` |
 | In PyCharm arbeiten | ▶ Weiter / Projekt öffnen | `ki open bilder` |
-| Zweites Projekt daneben | Projekt öffnen (zweites) | `ki open notizen`, dann Win+E / Win+W |
-| Terminal ohne IDE | Terminal im Projekt | `ki shell bilder` |
+| Terminal ohne IDE | Terminal im Projekt | `ki terminal bilder` (Win+T) |
+| Zwei Terminals / Terminal + Dateien nebeneinander | einfach nacheinander öffnen | Win+T, Win+D, Win+Enter |
 | Training im Hintergrund | Training & Jobs | `ki run bilder -- python train.py`, `ki logs bilder`, `ki stop bilder` |
 | Notebook | Training & Jobs → JupyterLab | `ki jupyter bilder` |
-| Dateien, USB-Stick | Dateien & USB | `ki dateien`, `ki usb` (Win+D) |
+| Dateien, USB-Stick | Dateien & USB | `ki dateien` (Win+D), `ki usb` |
 | Bildschirm, Skalierung, Tastatur | Einstellungen | – |
 | Platz freimachen | Projekte verwalten | `ki list --size`, `ki clean bilder` |
 | Etwas stimmt nicht | System → Diagnose | `ki doctor` |
 | Setup aktualisieren | System → Setup aktualisieren | `ki update` |
 
-Tasten: **Win+1** Menü · **Win+2** IDE · **Win+3** Extra · **Win+Enter** Terminal · **Win+D** Dateien ·
-**Win+G** GPU-Monitor · **Win+E/W** zwei Fenster nebeneinander/als Reiter · **Win+O** auf den zweiten
-Monitor. Alles Weitere: `ki help`.
+**Fenster nebeneinander:** Terminal, Dateien, GPU-Monitor und Jupyter öffnen sich als eigene Fenster
+neben dem aktuellen – i3 teilt den Bildschirm von selbst (zwei Fenster = je eine Hälfte). Jedes
+schließt einzeln (`exit`, F10 im Dateimanager oder Win+Shift+Q), das andere füllt dann den Platz.
+Von der Menü-Fläche aus landen neue Fenster auf „Extra“, damit das Menü frei bleibt; ist dort das
+letzte Fenster zu, geht es zurück zum Menü.
+
+Tasten: **Win+1** Menü · **Win+2** IDE · **Win+3** Extra · **Win+T** Terminal im Projekt ·
+**Win+Enter** Terminal (Host) · **Win+D** Dateien · **Win+G** GPU-Monitor · **Win+Pfeil** Fenster
+wechseln · **Win+Shift+Q** Fenster schließen · **Win+E** nebeneinander ↔ untereinander · **Win+W**
+als Reiter · **Win+R** Größe · **Win+O** auf den zweiten Monitor. Alles Weitere: `ki help`.
 
 ## Dokumentation
 
@@ -135,5 +142,6 @@ setup              Funktionen installieren / entfernen / aktualisieren
 core/lib.sh        Buchführung: jede Änderung außerhalb von ~/.ki/<funktion> landet im Manifest
 core/ui.sh         Menü-Bausteine (gum, mit Notfallmodus)
 features/<name>/   je Funktion: feature.sh, ihre Vorlagen und Befehle (bin/ki-…)
-tests/run.sh       102 Prüfungen: Lint, Installieren→Entfernen ohne Rückstände, Kerker mit bubblewrap
+tests/run.sh       117 Prüfungen: Lint, Installieren→Entfernen ohne Rückstände, Kerker mit bubblewrap,
+                   echte Oberfläche (i3 + urxvt auf virtuellem Bildschirm)
 ```

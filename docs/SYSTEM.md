@@ -131,10 +131,10 @@ werden von `ki` weitergereicht, wenn die Funktion installiert ist (Tab-Vervollst
 
 | Bereich | Befehle |
 |---|---|
-| Projekte | `ki new <p> [--vorlage …] [--torch] [--python 3.12]`, `ki clone <url>`, `ki import <ordner>`, `ki open <p>`, `ki shell <p>`, `ki list`, `ki clean`, `ki mv`, `ki rm` |
+| Projekte | `ki new <p> [--vorlage …] [--torch] [--python 3.12]`, `ki clone <url>`, `ki import <ordner>`, `ki open <p>`, `ki shell <p>`, `ki terminal [p]`, `ki list`, `ki clean`, `ki mv`, `ki rm` |
 | Training | `ki run <p> -- cmd`, `ki jobs`, `ki logs`, `ki stop`, `ki jupyter <p>`, `ki power` |
 | Funktionen | `ki setup`, `ki setup list/install/remove/reinstall/files/update/remove-all` |
-| System | `ki status`, `ki doctor`, `ki update`, `ki menu`, `ki start`, `ki einstellungen` |
+| System | `ki status`, `ki doctor`, `ki update`, `ki menu`, `ki start`, `ki fenster [befehl]`, `ki einstellungen` |
 | Werkzeuge | `ki dateien`, `ki usb`, `ki top`, `ki pycharm update/versionen/aufraeumen/speicher` |
 
 ### 5.2 Menü
@@ -181,17 +181,26 @@ direkt nach jeder Änderung (`ki anzeige anwenden`) – nie im Hintergrund.
 | CPU-Modus | ausgewogen / Leistung |
 | Funktionen verwalten | Häkchenliste: an = installieren, aus = restlos entfernen |
 
-### 5.5 Mehrere Projekte, zweiter Monitor
+### 5.5 Fenster nebeneinander, zweiter Monitor
 
-Ein zweites `ki open` (oder im Menü „Projekt öffnen“ bei offener IDE) öffnet ein weiteres
-PyCharm-Fenster, bis zu drei (`KI_IDE_MAX`). Beide landen auf der Arbeitsfläche IDE:
-**Win+E** nebeneinander/untereinander, **Win+W** als Reiter, **Win+R** Größe ändern,
-**Win+Shift+O** Fenster auf den anderen Monitor, **Win+O** die ganze Arbeitsfläche.
+Terminals (`ki terminal`, Win+T), der Dateimanager (Win+D), ein Host-Terminal (Win+Enter), der
+GPU-Monitor (Win+G) und JupyterLab öffnen sich über `ki fenster` als **eigene Fenster neben dem
+aktuellen**. i3 teilt den Bildschirm dabei selbst: zwei Fenster = je eine Hälfte, drei = Drittel.
 
-Jedes Fenster kostet 1,5–2 GB RAM. Das erste nutzt die Einstellungen in `~/.ki/pycharm/config`;
-weitere starten mit einer frischen Kopie davon (`fenster-N/config`) – Einstellungen daher im ersten
-Fenster ändern. Plugins und Lizenzstatus teilen sich alle. Grund: Zwei PyCharm-Instanzen dürfen
-nicht gleichzeitig in denselben Einstellungsordner schreiben.
+- **Einzeln schließen:** `exit` im Terminal, F10 im Dateimanager oder Win+Shift+Q auf dem Fenster.
+  Das übrige Fenster füllt danach den Platz.
+- **Menü bleibt frei:** Wer von der Menü-Fläche aus ein Fenster öffnet, landet auf „Extra“. Ist
+  dort das letzte Fenster geschlossen, springt die Anzeige zurück zum Menü.
+- **Anordnen:** Win+Pfeil wechselt das Fenster, Win+Shift+Pfeil tauscht die Plätze, Win+E schaltet
+  nebeneinander ↔ untereinander, Win+W macht Reiter daraus, Win+R ändert die Größe (Pfeile, Enter).
+- **Zweiter Monitor:** Win+Shift+O schiebt das Fenster hinüber, Win+O die ganze Arbeitsfläche.
+- **Neben PyCharm:** Win+2 (IDE), dann Win+T – das Terminal öffnet sich rechts neben PyCharm.
+
+**Zweites PyCharm-Fenster (experimentell):** Ein zweites `ki open` startet eine weitere PyCharm-
+Instanz, bis zu drei (`KI_IDE_MAX`), mit einer frischen Kopie der Einstellungen
+(`~/.ki/pycharm/fenster-N/config`), weil zwei Instanzen nicht in denselben Einstellungsordner
+schreiben dürfen. Mit echtem PyCharm ist das nicht getestet – klappt es nicht, für das zweite
+Projekt ein Terminal (Win+T) und den Dateimanager nehmen. Jede Instanz kostet 1,5–2 GB RAM.
 
 ### 5.6 Dateien und USB-Sticks
 
@@ -268,6 +277,7 @@ gehören die Dateien dir) und wirft sie sicher aus. Kein udisks-Dienst – der k
 | B11 | Uhr nach Windows falsch | Anleitung: in Windows `reg add "HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation" /v RealTimeIsUniversal /d 1 /t REG_DWORD /f`, Schnellstart aus |
 | B12 | CUDA-PATH mehrfach | entfällt – `login.sh` setzt PATH, keine `.bashrc`-Bearbeitung |
 | B13 | Esc beendet Start | entfällt – kein `set -e`, Esc = zurück |
+| N1 | Menüfenster erschien nicht (v2) | behoben – i3 wandelt `\"` in seiner Konfiguration um; die Menü-Schleife ist jetzt ein eigenes Skript und endet mit der Oberfläche (im Test mit echtem i3 geprüft) |
 
 ## 10. Wartung
 
@@ -305,7 +315,8 @@ Programmdaten in `~/.config` oder `~/.local/share`.
 
 - [ ] Neustart: Autologin, dunkles Menü, Leiste mit GPU-Werten, Arbeitsflächen „Menü IDE Extra“
 - [ ] Neues Projekt `zz-test` (Vorlage ml), in PyCharm öffnen: Interpreter gesetzt, nur `code`-Inhalt sichtbar
-- [ ] Zweites Projekt öffnen: zweites Fenster, Win+E/Win+W wechseln die Anordnung
+- [ ] Win+T (Projekt wählen) und Win+D: Terminal und Dateien je eine Bildschirmhälfte, einzeln schließbar
+- [ ] Letztes Fenster auf „Extra“ schließen: Anzeige springt zurück zum Menü
 - [ ] Win+1 während PyCharm läuft: Menü bedienbar, Kopf zeigt beide Projekte
 - [ ] Job starten, Leiste zeigt „Jobs 1“, nach dem Ende „✓ zz-test fertig“
 - [ ] USB-Stick einbinden, im Dateimanager öffnen, auswerfen
@@ -319,9 +330,10 @@ Programmdaten in `~/.config` oder `~/.local/share`.
 | Aufgabe | Taste / Befehl |
 |---|---|
 | Menü / IDE / Extra | Win+1 / Win+2 / Win+3, Win+Tab = zuletzt |
-| Terminal / Dateien / GPU-Monitor | Win+Enter / Win+D / Win+G |
+| Terminal im Projekt / Host-Terminal / Dateien / GPU-Monitor | Win+T / Win+Enter / Win+D / Win+G |
 | Fenster schließen / Vollbild | Win+Shift+Q / Win+F |
-| Zwei Fenster: nebeneinander / Reiter / Größe | Win+E / Win+W / Win+R (Pfeile, Enter) |
+| Fenster wechseln / tauschen / schließen | Win+Pfeil / Win+Shift+Pfeil / Win+Shift+Q |
+| Anordnung: nebeneinander↔untereinander / Reiter / Größe | Win+E / Win+W / Win+R (Pfeile, Enter) |
 | Zweiter Monitor | Win+O (Arbeitsfläche), Win+Shift+O (Fenster) |
 | i3 neu laden | Win+Shift+R |
 | Schriftgröße im Terminal | Strg+Bild↑/↓ |

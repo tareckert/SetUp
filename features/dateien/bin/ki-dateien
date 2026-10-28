@@ -1,9 +1,13 @@
 #!/bin/sh
-# ki dateien [ordner…] – Dateimanager (Midnight Commander). Alle seine Dateien liegen in ~/.ki/dateien.
-# Ohne Terminal (z. B. Win+D) öffnet er ein eigenes Fenster auf der Extra-Arbeitsfläche.
-if [ ! -t 0 ] && [ -n "${DISPLAY:-}" ]; then
-    exec urxvt -name ki-extra -title Dateien -e "$0" "$@"
+# ki dateien [--fenster] [ordner…] – Dateimanager (Midnight Commander). Alle seine Dateien liegen
+# in ~/.ki/dateien. Mit --fenster (oder ohne Terminal, z. B. Win+D) als eigenes Fenster neben dem
+# aktuellen; schließen mit F10 oder Win+Shift+Q.
+KI=$(dirname "$(readlink -f "$0")")/../../basis/bin/ki
+if [ -n "${DISPLAY:-}" ] && { [ "${1:-}" = --fenster ] || [ ! -t 0 ]; }; then
+    [ "${1:-}" = --fenster ] && shift
+    exec "$KI" fenster --titel Dateien -- "$0" "$@"
 fi
+[ "${1:-}" = --fenster ] && shift
 export MC_PROFILE_ROOT="$HOME/.ki/dateien"
 if [ "$(tput colors 2>/dev/null || echo 8)" -ge 256 ]; then skin=modarin256-defbg; else skin=default; fi
 [ $# -gt 0 ] || set -- "$HOME/projects" "$HOME/shared_data"

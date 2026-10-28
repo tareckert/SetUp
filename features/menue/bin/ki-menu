@@ -13,14 +13,14 @@ printf '\e]2;KI-Menü\a'
 
 GUI=0; [ -n "${DISPLAY:-}" ] && GUI=1
 S_IDE="" S_LAST="" S_JOBS=0 S_POWER="" S_FEATURES="" S_PROJECTS="$HOME/projects"
-S_WS_IDE="2:IDE" S_WS_EXTRA="3:Extra"
+S_WS_IDE="2:IDE"
 load_state() {
     local k v
     while IFS='=' read -r k v; do
         case $k in
             ide) S_IDE=$v ;; last) S_LAST=$v ;; jobs) S_JOBS=$v ;; power) S_POWER=$v ;;
             features) S_FEATURES=" $v" ;; projects) S_PROJECTS=$v ;;
-            ws_ide) S_WS_IDE=$v ;; ws_extra) S_WS_EXTRA=$v ;;
+            ws_ide) S_WS_IDE=$v ;;
         esac
     done < <("$KI" _state 2>/dev/null)
 }
@@ -83,7 +83,19 @@ run_open() {
     fi
     if ! out=$("$KI" open "$1" 2>&1); then clear_screen; printf '%s\n' "$out" >&2; pause; fi
 }
-run_shell() { clear_screen; "$KI" shell "$1"; }
+# In der Oberfläche öffnen Terminal, Dateien, Jupyter und Monitor eigene Fenster neben dem
+# aktuellen – das Menü bleibt frei. Ohne Oberfläche laufen sie hier im Menü-Terminal.
+has_win() { [ $GUI = 1 ] && has oberflaeche; }
+run_shell() {
+    if has_win; then "$KI" terminal "$1"; else clear_screen; "$KI" shell "$1"; fi
+}
+run_files() {   # run_files [ordner…]
+    if has_win; then "$KI" dateien --fenster "$@"; else "$KI" dateien "$@"; fi
+}
+run_window() {   # run_window <titel> <befehl…> – Fenster oder hier
+    local t=$1; shift
+    if has_win; then "$KI" fenster --titel "$t" -- "$@"; else clear_screen; "$@"; fi
+}
 
 new_project() {
     local how name tmpl rows=() t d torch=() next url src
@@ -174,14 +186,8 @@ show_jobs() {
 start_jupyter() {
     local p
     p=$(pick_project "JupyterLab starten für …") || return
-    if [ $GUI = 1 ]; then
-        # Eigenes Fenster auf der Extra-Arbeitsfläche, das Menü bleibt frei
-        urxvt -name ki-extra -title "Jupyter $p" -e sh -c \
-            '"$0" jupyter "$1"; printf "\nEnter = Fenster schließen"; read -r _' "$KI" "$p" >/dev/null 2>&1 &
-        i3ws "$S_WS_EXTRA"
-    else
-        clear_screen; "$KI" jupyter "$p"; pause
-    fi
+    if has_win; then "$KI" fenster --titel "Jupyter $p" -- "$KI" jupyter "$p"
+    else clear_screen; "$KI" jupyter "$p"; pause; fi
 }
 
 clean_dialog() {   # $1 Projekt
@@ -208,7 +214,7 @@ project_actions() {   # $1 Projekt
         case $c in
             "In PyCharm"*) run_open "$p"; return ;;
             Terminal*)     run_shell "$p" ;;
-            "Im Datei"*)   "$KI" dateien "$S_PROJECTS/$p/code" ;;
+            "Im Datei"*)   run_files "$S_PROJECTS/$p/code" ;;
             Job-Logs)      "$KI" logs "$p" 2>/dev/null || { say_err "Noch keine Jobs."; pause; } ;;
             PyCharm-Log)   less -R +G "$S_PROJECTS/$p/.ki/ide.log" 2>/dev/null || { say_err "Noch kein PyCharm-Log."; pause; } ;;
             Cache*)        clean_dialog "$p" ;;
@@ -236,7 +242,7 @@ jobs_menu() {
             "Job starten")  start_job ;;
             "Jobs ansehen") show_jobs ;;
             JupyterLab*)    start_jupyter ;;
-            GPU*)           "$KI" top ;;
+            GPU*)           run_window GPU-Monitor "$KI" top ;;
             CPU*)           clear_screen
                             if [ "$S_POWER" = Leistung ]; then "$KI" power balanced; else "$KI" power performance; fi || pause ;;
             *)              return ;;
@@ -264,7 +270,7 @@ files_menu() {
         draw_header
         c=$(ui_choose "Dateien & USB" "Dateimanager öffnen" "USB-Stick einbinden / auswerfen" "Zurück") || return
         case $c in
-            Dateimanager*) "$KI" dateien ;;
+            Dateimanager*) run_files ;;
             USB*)          "$KI" usb ;;
             *)             return ;;
         esac
@@ -297,9 +303,11 @@ system_menu() {
             "System a"*)   system_update ;;
             "Setup a"*)    clear_screen; "$KI" update; pause ;;
             PyCharm*)      clear_screen; "$KI" pycharm update; pause ;;
-            Host*)         clear_screen
-                           printf 'Host-Shell – hier wirken sudo und apt. exit = zurück zum Menü\n\n' >&2
-                           bash -i ;;
+            Host*)         if has_win; then "$KI" fenster --titel Host-Terminal
+                           else clear_screen
+                                printf 'Host-Shell – hier wirken sudo und apt. exit = zurück zum Menü\n\n' >&2
+                                bash -i
+                           fi ;;
             Handbuch*)     handbook ;;
             "Neu starten") ui_confirm "Rechner neu starten?" no && { sudo -n systemctl reboot 2>/dev/null || systemctl reboot; } ;;
             *)             return ;;

@@ -1,0 +1,12 @@
+#!/bin/sh
+# ki menuschleife – hält das Menü-Fenster offen (startet i3 einmal beim Login).
+# Geschlossen kommt es nach 1 s wieder. Bricht das Menü ab (oder ist die Funktion "menue" nicht
+# installiert), bleibt eine Shell im Fenster – nie ein leerer Bildschirm.
+# (Als eigenes Skript, weil i3 in seiner Konfiguration \" umwandelt und verschachtelte
+# Anführungszeichen zerstören würde.)
+while :; do
+    urxvt -name ki-menu -title KI-Menü -e sh -c \
+        'ki menu || { echo; echo "Kein Menü – Shell (exit = neu versuchen)"; exec bash; }'
+    xset q >/dev/null 2>&1 || exit 0          # Oberfläche beendet → Schleife auch
+    sleep 1
+done

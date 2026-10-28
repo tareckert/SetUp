@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# ki fenster [--titel T] [--] [befehl …] – Befehl (Standard: bash) in einem neuen Terminal-Fenster.
+#
+# Das Fenster öffnet sich auf der aktuellen Arbeitsfläche neben dem, was dort schon ist – i3 teilt
+# den Bildschirm von selbst (Win+E: nebeneinander ↔ untereinander). Nur die Menü-Fläche bleibt
+# frei: Von dort geht es auf "Extra". Jedes Fenster schließt einzeln (exit, q, Win+Shift+Q);
+# war es das letzte auf seiner Fläche, springt die Anzeige zurück zum Menü.
+set -uo pipefail
+SELF=$(readlink -f "${BASH_SOURCE[0]}")
+WS_MENU="1:Menü" WS_EXTRA="3:Extra"          # wie in oberflaeche/i3.conf
+
+ws_focused() {   # Name der Arbeitsfläche, die gerade zu sehen ist
+    i3-msg -t get_workspaces 2>/dev/null | python3 -c '
+import json, sys
+print(next((w["name"] for w in json.load(sys.stdin) if w.get("focused")), ""))' 2>/dev/null
+}
+last_window() {   # "ja", wenn dieses Fenster (WINDOWID) allein auf der sichtbaren Fläche ist
+    i3-msg -t get_tree 2>/dev/null | WINDOWID="${WINDOWID:-0}" python3 -c '
+import json, os, sys
+wid = int(os.environ["WINDOWID"] or 0)
+def walk(n):
+    yield n
+    for k in n.get("nodes", []) + n.get("floating_nodes", []):
+        yield from walk(k)
+for ws in (x for x in walk(json.load(sys.stdin)) if x.get("type") == "workspace"):
+    nodes = list(walk(ws))
+    if any(x.get("window") == wid for x in nodes):
+        alone = sum(1 for x in nodes if x.get("window")) == 1
+        print("ja" if alone and any(x.get("focused") for x in nodes) else "nein")
+        break' 2>/dev/null
+}
+
+if [ "${1:-}" = _innen ]; then   # läuft im neuen Fenster
+    shift
+    start=$SECONDS
+    "$@"
+    rc=$?
+    # Scheitert etwas gleich beim Start, bleibt die Meldung lesbar stehen
+    if [ $rc -ne 0 ] && [ $((SECONDS - start)) -lt 5 ]; then
+        printf '\n(beendet mit Code %s – Enter schließt das Fenster) ' "$rc"; read -r _
+    fi
+    [ "$(last_window)" = ja ] && i3-msg -q workspace "$WS_MENU" >/dev/null 2>&1
+    exit $rc
+fi
+
+titel="KI"
+if [ "${1:-}" = --titel ]; then titel=${2:-KI}; shift 2; fi
+[ "${1:-}" = -- ] && shift
+[ $# -gt 0 ] || set -- bash
+[ -n "${DISPLAY:-}" ] || { echo "ki fenster: gibt es nur in der Oberfläche" >&2; exit 1; }
+[ "$(ws_focused)" = "$WS_MENU" ] && i3-msg -q workspace "$WS_EXTRA" >/dev/null 2>&1
+setsid -f urxvt -title "$titel" -e "$SELF" _innen "$@" >/dev/null 2>&1
