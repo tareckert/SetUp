@@ -1,0 +1,4 @@
+# PyTorch von PyPI bringt die passenden CUDA-Bibliotheken selbst mit – kein CUDA-Toolkit nötig.
+# Installieren: Menü → Projekte verwalten → Pakete, oder  ki pakete <projekt>
+torch
+transformers

@@ -14,6 +14,9 @@ feature_install() {
     apt_install_optional $OPTIONAL
     opt_dir >/dev/null
     mkdir -p "$FDIR/config" "$FDIR/data" "$FDIR/java"
+    sys_file sysctl.conf /etc/sysctl.d/90-ki-pycharm.conf
+    [ "$CHANGED" = 1 ] && $SUDO sysctl -q --system
+    ok "inotify: 524288 Watches – PyCharm bemerkt Dateiänderungen sofort"
     if [ -e "$KI_ROOT/opt/ki/pycharm/current" ]; then
         ok "PyCharm vorhanden – neue Version: ki pycharm update"
         return 0

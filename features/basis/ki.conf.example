@@ -12,6 +12,10 @@
 # Höchstens so viele PyCharm-Fenster gleichzeitig (jedes braucht 1,5–2 GB RAM)
 #KI_IDE_MAX=3
 
+# Startoptionen, die ki in PyCharms vmoptions ergänzt (fehlende werden bei jedem Start nachgetragen).
+# Vorgabe: kein Update-Check im Hintergrund, keine Tipps und Rückfragen beim Start. Leer = nichts ergänzen.
+#KI_IDE_FLAGS="-XX:+UseStringDeduplication -Dide.no.platform.update=true -Didea.initially.ask.config=never -Djb.consents.confirmation.enabled=false -Dide.show.tips.on.startup.default.value=false"
+
 # uv für Paketinstallationen im Projekt: auto (wenn installiert) oder 0 (nur pip)
 #KI_USE_UV=auto
 

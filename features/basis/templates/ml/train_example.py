@@ -34,7 +34,7 @@ def main() -> None:
         optimizer.load_state_dict(state["optimizer"])
         scaler.load_state_dict(state["scaler"])
         start_epoch = state["epoch"] + 1
-        print(f"Fortsetzen ab Epoche {start_epoch}")
+        print(f"Fortsetzen ab Epoche {start_epoch + 1} (Checkpoint {CHECKPOINT})")
 
     def save(epoch: int) -> None:
         CHECKPOINT.parent.mkdir(parents=True, exist_ok=True)
@@ -42,6 +42,7 @@ def main() -> None:
                  "scaler": scaler.state_dict(), "epoch": epoch}
         torch.save(state, CHECKPOINT)
 
+    print(f"Training auf {torch.cuda.get_device_name(0) if device.type == 'cuda' else 'CPU (keine GPU gefunden)'}")
     try:
         for epoch in range(start_epoch, EPOCHS):
             total = 0.0
@@ -55,8 +56,8 @@ def main() -> None:
                 scaler.update()
                 total += loss.item()
             save(epoch)
-            peak = torch.cuda.max_memory_allocated() / 2**20 if device.type == "cuda" else 0
-            print(f"Epoche {epoch + 1}/{EPOCHS} · Loss {total / STEPS:.4f} · VRAM-Spitze {peak:.0f} MiB")
+            vram = f" · VRAM-Spitze {torch.cuda.max_memory_allocated() / 2**20:.0f} MiB" if device.type == "cuda" else ""
+            print(f"Epoche {epoch + 1}/{EPOCHS} · Loss {total / STEPS:.4f}{vram}")
     except KeyboardInterrupt:
         print("Gestoppt – letzter vollständiger Checkpoint bleibt erhalten.")
         return

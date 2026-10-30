@@ -27,7 +27,7 @@ und alles lässt sich einzeln installieren und **restlos** wieder entfernen.
                  Dateien & USB
                  Einstellungen
                  System
-                 Hilfe & Tasten
+                 Hilfe & Erste Schritte
                  Ausschalten
 ```
 
@@ -58,6 +58,8 @@ einen USB-Stick kopieren. Beim Installieren wird die Ubuntu-Partition formatiert
 4. `sudo reboot` – danach startet der PC direkt ins Menü.
 5. Alte Projekte zurückholen: Menü → *Dateien & USB* → USB-Stick einbinden, dann
    *Neues Projekt* → *Vorhandenen Ordner übernehmen*.
+6. Wie alles zusammenspielt: Menü → *Hilfe & Erste Schritte* (auch hier:
+   [docs/ERSTE-SCHRITTE.md](docs/ERSTE-SCHRITTE.md)).
 
 Windows startest du über das Boot-Menü der Firmware (ASRock: **F11** beim Einschalten), falls es im
 GRUB-Menü fehlt – am Bootloader ändert dieses Setup nichts.
@@ -66,7 +68,7 @@ GRUB-Menü fehlt – am Bootloader ändert dieses Setup nichts.
 
 | Funktion | Vorauswahl | Was sie tut |
 |---|---|---|
-| `basis` | immer | `ki`-Befehl, Kerker (bubblewrap), Python, Projektvorlagen |
+| `basis` | immer | `ki`-Befehl, Kerker (bubblewrap), Python, Projektvorlagen, Git für alle Projekte |
 | `netz` | ja | IPv4 vor IPv6 – gegen abbrechende Downloads bei halbem IPv6 |
 | `schlank` | ja | cloud-init, snapd, unnötige Dienste und automatische Updates aus |
 | `speicher` | ja | zram (komprimierter RAM-Swap), earlyoom gegen Einfrieren, Journal-Limit |
@@ -104,13 +106,16 @@ Was eine Funktion angelegt hat: `ki setup files <name>`. Alles entfernen: `ki se
 
 | Was | Menü | Befehl |
 |---|---|---|
-| Projekt anlegen | Neues Projekt | `ki new bilder --vorlage ml --torch` |
+| Projekt anlegen | Neues Projekt (Vorlagen: ml, llm, py, node) | `ki new bilder --vorlage ml --torch` |
 | Git-Repo als Projekt | Neues Projekt → Git | `ki clone https://github.com/… --install` |
 | In PyCharm arbeiten | ▶ Weiter / Projekt öffnen | `ki open bilder` |
 | Terminal ohne IDE | Terminal im Projekt | `ki terminal bilder` (Win+T) |
+| Pakete installieren | Projekte verwalten → Projekt → Pakete | `ki pakete bilder pandas` (ohne Namen: requirements.txt) |
 | Zwei Terminals / Terminal + Dateien nebeneinander | einfach nacheinander öffnen | Win+T, Win+D, Win+Enter |
-| Training im Hintergrund | Training & Jobs | `ki run bilder -- python train.py`, `ki logs bilder`, `ki stop bilder` |
-| Notebook | Training & Jobs → JupyterLab | `ki jupyter bilder` |
+| Training im Hintergrund | Training & Jobs (Befehl wird vorgeschlagen) | `ki run bilder -- python train.py`, `ki logs bilder`, `ki stop bilder` |
+| Sprachmodell lokal | Neues Projekt → Vorlage llm, dann `chat.py` | `ki shell sprache -- python chat.py` |
+| Notebook | `.ipynb` in PyCharm öffnen | `ki jupyter bilder` (nur für den Zweitrechner) |
+| Git-Name, Zugangsdaten | Einstellungen → Git | `ki git` |
 | Dateien, USB-Stick | Dateien & USB | `ki dateien` (Win+D), `ki usb` |
 | Bildschirm, Skalierung, Tastatur | Einstellungen | – |
 | Platz freimachen | Projekte verwalten | `ki list --size`, `ki clean bilder` |
@@ -130,6 +135,8 @@ als Reiter · **Win+R** Größe · **Win+O** auf den zweiten Monitor. Alles Weit
 
 ## Dokumentation
 
+- [docs/ERSTE-SCHRITTE.md](docs/ERSTE-SCHRITTE.md) – Einstieg: Projekt, Programmieren, Trainieren,
+  KI ausführen, Git (auch im Menü unter *Hilfe*)
 - [docs/SYSTEM.md](docs/SYSTEM.md) – wie alles funktioniert: Funktionen, Ordner, Kerker, Einstellungen,
   Entscheidungen, Grenzen, Fehlersuche, Spickzettel
 - [docs/KI-PRAXIS.md](docs/KI-PRAXIS.md) – Training und Inferenz mit 6 GB VRAM
@@ -142,6 +149,6 @@ setup              Funktionen installieren / entfernen / aktualisieren
 core/lib.sh        Buchführung: jede Änderung außerhalb von ~/.ki/<funktion> landet im Manifest
 core/ui.sh         Menü-Bausteine (gum, mit Notfallmodus)
 features/<name>/   je Funktion: feature.sh, ihre Vorlagen und Befehle (bin/ki-…)
-tests/run.sh       117 Prüfungen: Lint, Installieren→Entfernen ohne Rückstände, Kerker mit bubblewrap,
-                   echte Oberfläche (i3 + urxvt auf virtuellem Bildschirm)
+tests/run.sh       137 Prüfungen: Lint, Installieren→Entfernen ohne Rückstände, Kerker mit bubblewrap,
+                   Git/Pakete/Jobs/Vorlagen, echte Oberfläche (i3 + urxvt auf virtuellem Bildschirm)
 ```

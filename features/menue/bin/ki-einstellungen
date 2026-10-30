@@ -127,6 +127,25 @@ pycharm_mem_dialog() {
     clear_screen; "$KI" pycharm speicher "${sel%% *}"; pause
 }
 
+git_dialog() {
+    local n e sel
+    while :; do
+        n=$(GIT_CONFIG_GLOBAL="$HOME/.ki/basis/git/config" git config --global user.name 2>/dev/null)
+        e=$(GIT_CONFIG_GLOBAL="$HOME/.ki/basis/git/config" git config --global user.email 2>/dev/null)
+        sel=$(ui_choose "Git – gilt für alle Projekte, PyCharm und das Terminal" \
+            "Name und E-Mail für Commits (jetzt: ${n:-nicht gesetzt}${e:+ <$e>})" \
+            "Gespeicherte Zugangsdaten löschen (z. B. abgelaufener GitHub-Token)" "Zurück") || return
+        case $sel in
+            Name*)  n=$(ui_input "Dein Name (steht an jedem Commit)" "Vorname Nachname" "$n") || continue
+                    e=$(ui_input "Deine E-Mail (bei GitHub: dieselbe wie dort)" "name@beispiel.de" "$e") || continue
+                    [ -n "$n" ] && [ -n "$e" ] && "$KI" git name "$n" "$e" >&2; pause ;;
+            Gesp*)  ui_confirm "Gespeicherte Git-Zugangsdaten löschen? Beim nächsten Push fragt Git neu." no &&
+                        { "$KI" git vergessen >&2; pause; } ;;
+            *)      return ;;
+        esac
+    done
+}
+
 cpu_dialog() {
     local cur sel
     cur=$("$KI" power status 2>/dev/null)
@@ -170,7 +189,7 @@ while :; do
                 "Bildschirm aus nach ($(conf_get SCHONER) Min)" "Tastatur"
                 "Oberfläche automatisch starten ($(conf_get AUTOSTART))")
     fi
-    items+=("Zeitzone")
+    items+=("Git: Name, E-Mail, Zugangsdaten" "Zeitzone")
     has pycharm && items+=("PyCharm-Speicher")
     has menue && items+=("CPU-Modus")
     items+=("Funktionen verwalten (installieren / entfernen)" "Zurück")
@@ -182,6 +201,7 @@ while :; do
         "Bildschirm aus"*) screensaver_dialog ;;
         Tastatur)       keyboard_dialog ;;
         Oberfläche*)    autostart_dialog ;;
+        Git*)           git_dialog ;;
         Zeitzone)       timezone_dialog ;;
         PyCharm*)       pycharm_mem_dialog ;;
         CPU*)           cpu_dialog ;;

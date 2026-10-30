@@ -12,12 +12,14 @@ jobs() {
     for f in "$KI_PROJECTS"/*/.ki/jobs/*.pid; do
         [ -f "$f" ] && kill -0 "$(cat "$f" 2>/dev/null)" 2>/dev/null && n=$((n + 1))
     done
-    # In den letzten 15 Minuten beendete Jobs: ✓ fertig / ✗ Fehler
+    # In den letzten 15 Minuten beendete Jobs: ✓ fertig / ■ gestoppt (ki stop) / ✗ Fehler
     for f in "$KI_PROJECTS"/*/.ki/jobs/*.exit; do
         [ -f "$f" ] || continue
         [ $((now - $(stat -c %Y "$f"))) -lt 900 ] || continue
         p=${f%/.ki/jobs/*}; p=${p##*/}
-        if [ "$(cat "$f")" = 0 ]; then fertig="$fertig✓ $p fertig | "; else fertig="$fertig✗ $p Fehler | "; fi
+        if [ -f "${f%.exit}.stop" ]; then fertig="$fertig■ $p gestoppt | "
+        elif [ "$(cat "$f")" = 0 ]; then fertig="$fertig✓ $p fertig | "
+        else fertig="$fertig✗ $p Fehler | "; fi
     done
     [ "$n" -gt 0 ] && printf 'Jobs %s | ' "$n"
     printf "%s" "$fertig"

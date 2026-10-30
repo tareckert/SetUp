@@ -13,14 +13,14 @@ printf '\e]2;KI-Menü\a'
 
 GUI=0; [ -n "${DISPLAY:-}" ] && GUI=1
 S_IDE="" S_LAST="" S_JOBS=0 S_POWER="" S_FEATURES="" S_PROJECTS="$HOME/projects"
-S_WS_IDE="2:IDE"
+S_WS_IDE="2:IDE" S_PC_NEU=0 S_GIT_NAME=""
 load_state() {
     local k v
     while IFS='=' read -r k v; do
         case $k in
             ide) S_IDE=$v ;; last) S_LAST=$v ;; jobs) S_JOBS=$v ;; power) S_POWER=$v ;;
             features) S_FEATURES=" $v" ;; projects) S_PROJECTS=$v ;;
-            ws_ide) S_WS_IDE=$v ;;
+            ws_ide) S_WS_IDE=$v ;; pycharm_neu) S_PC_NEU=$v ;; git_name) S_GIT_NAME=$v ;;
         esac
     done < <("$KI" _state 2>/dev/null)
 }
@@ -60,6 +60,7 @@ pick_project() {   # $1 Überschrift, $2 = size → mit Größen → Projektname
         rows+=("${line%"${line##*[! ]}"}")
     done < <("$KI" list "${args[@]}" 2>/dev/null)
     if [ ${#rows[@]} = 0 ]; then say_err "Noch keine Projekte – im Hauptmenü \"Neues Projekt\" wählen."; pause; return 1; fi
+    [ "${2:-}" = size ] && draw_header   # "Berechne Größen …" wieder wegnehmen
     if [ ${#rows[@]} -gt 12 ]; then choice=$(printf '%s\n' "${rows[@]}" | ui_filter "$header") || return 1
     else choice=$(ui_choose "$header" "${rows[@]}") || return 1; fi
     printf '%s\n' "${choice%% *}"
@@ -80,6 +81,14 @@ run_open() {
     local out
     if [ -n "$S_IDE" ] && [[ ",$S_IDE," != *",$1,"* ]]; then
         ui_confirm "PyCharm ist schon offen ($S_IDE). Zweites Fenster mit '$1' öffnen? (+1,5–2 GB RAM)" || return
+    fi
+    if [ "$S_PC_NEU" = 1 ]; then   # einmalig: was beim ersten Start von PyCharm kommt
+        local lines=() l
+        mapfile -t lines < <("$KI" _pycharm_hinweis)
+        clear_screen; ui_box "Erster Start von PyCharm"
+        set_indent "${lines[@]}"
+        for l in "${lines[@]}"; do printf '%s%s\n' "$INDENT" "$l" >&2; done
+        pause
     fi
     if ! out=$("$KI" open "$1" 2>&1); then clear_screen; printf '%s\n' "$out" >&2; pause; fi
 }
@@ -105,7 +114,9 @@ new_project() {
             url=$(ui_input "Adresse des Git-Repos" "https://github.com/…") || return
             [ -n "$url" ] || return
             ui_confirm "Pakete aus requirements.txt gleich installieren?" && torch=(--install)
-            clear_screen; "$KI" clone "$url" "${torch[@]}" || pause
+            clear_screen; "$KI" clone "$url" "${torch[@]}" || { pause; return; }
+            [ -z "$S_GIT_NAME" ] && git_identity_ask
+            say_ok "Fertig – das Projekt ist angelegt."; pause
             return ;;
         Vorhandenen*)
             # Ordner auf eingebundenen USB-Sticks direkt anbieten, sonst Pfad eingeben
@@ -137,9 +148,13 @@ new_project() {
     while IFS=$'\t' read -r t d; do rows+=("$(printf '%-10s %s' "$t" "$d")"); done < <("$KI" new --vorlagen)
     tmpl=$(ui_choose "Vorlage für $name" "${rows[@]}") || return
     tmpl=${tmpl%% *}
-    if [ "$tmpl" = ml ] && ui_confirm "PyTorch gleich installieren? (einmalig ca. 3 GB Download)"; then torch=(--torch); fi
+    case $tmpl in
+        ml|llm) ui_confirm "PyTorch gleich installieren? (ca. 3 GB Download, ein paar Minuten – braucht Internet)" &&
+                    torch=(--torch) ;;
+    esac
     clear_screen
     "$KI" new "$name" --vorlage "$tmpl" "${torch[@]}" || { pause; return; }
+    [ -z "$S_GIT_NAME" ] && git_identity_ask
     if can_ide; then
         next=$(ui_choose "Projekt $name ist bereit – wie weiter?" "In PyCharm öffnen" "Terminal im Projekt" "Zurück zum Menü") || return
     else
@@ -151,16 +166,32 @@ new_project() {
     esac
 }
 
+git_identity_ask() {   # einmalig: Name und E-Mail für Git-Commits (gilt für alle Projekte)
+    local n e
+    ui_confirm "Git: Name und E-Mail für deine Commits eintragen? (einmalig, gilt für alle Projekte)" || return 0
+    n=$(ui_input "Dein Name (steht an jedem Commit)" "Vorname Nachname" "$S_GIT_NAME") || return 0
+    e=$(ui_input "Deine E-Mail (bei GitHub: dieselbe wie dort)" "name@beispiel.de") || return 0
+    [ -n "$n" ] && [ -n "$e" ] && "$KI" git name "$n" "$e" >&2 && S_GIT_NAME=$n
+    return 0
+}
+
 start_job() {
     local p last cmd c
     p=$(pick_project "Job starten in …") || return
     last=$("$KI" _lastcmd "$p" 2>/dev/null)
-    cmd=$(ui_input "Befehl im Kerker (Ordner ~/code) – läuft im Hintergrund weiter" "python train.py" "${last:-python train.py}") || return
+    cmd=$(ui_input "Befehl im Projektordner (~/code) – läuft im Hintergrund weiter, auch ohne Menü" "python train.py" "$last") || return
     [ -n "$cmd" ] || return
     clear_screen
     "$KI" run "$p" --sh "$cmd" || { pause; return; }
-    c=$(ui_choose "Job gestartet – die Leiste unten meldet das Ende" "Log live ansehen (Strg+C stoppt Mitlaufen, q beendet)" "Zurück") || return
-    [[ $c == Log* ]] && "$KI" logs "$p"
+    c=$(ui_choose "Job gestartet – die Leiste unten meldet das Ende" "Log live ansehen" "Zurück") || return
+    [[ $c == Log* ]] && show_log "$p"
+}
+show_log() {   # show_log <projekt> [job] – in der Oberfläche als eigenes Fenster, sonst hier
+    if has_win; then "$KI" fenster --titel "Log $1" -- "$KI" logs "$@"
+    else
+        say_ok "q = zurück · läuft der Job noch: Strg+C hält das Mitlaufen an, F setzt es fort"; sleep 1
+        "$KI" logs "$@"
+    fi
 }
 
 show_jobs() {
@@ -175,10 +206,11 @@ show_jobs() {
     if [ "$st" = "läuft" ]; then
         c=$(ui_choose "Job $id in $p" "Log live ansehen" "Stoppen (Strg+C an das Programm, Checkpoint möglich)" "Zurück") || return
     else
-        c=$(ui_choose "Job $id in $p ($st)" "Log ansehen" "Zurück") || return
+        c=$(ui_choose "Job $id in $p ($st)" "Log ansehen" "Gleichen Befehl neu starten" "Zurück") || return
     fi
     case $c in
-        Log*)   "$KI" logs "$p" "$id" ;;
+        Log*)   show_log "$p" "$id" ;;
+        Gleich*) clear_screen; "$KI" run "$p" --sh "$("$KI" _jobcmd "$p" "$id")"; pause ;;
         Stopp*) clear_screen; "$KI" stop "$p" "$id"; pause ;;
     esac
 }
@@ -200,14 +232,24 @@ clean_dialog() {   # $1 Projekt
     clear_screen; "$KI" clean "$1" "${names[@]}"; pause
 }
 
+install_packages() {   # $1 Projekt – Pakete per Name oder alles aus requirements.txt
+    local pk args=()
+    pk=$(ui_input "Pakete für $1 (mit Leerzeichen getrennt; leer = alles aus requirements.txt)" "z. B. pandas scikit-learn") || return
+    read -r -a args <<< "$pk"
+    clear_screen
+    "$KI" pakete "$1" "${args[@]}"
+    pause
+}
+
 project_actions() {   # $1 Projekt
     local p=$1 c new items=()
     while :; do
+        draw_header
         items=()
         can_ide && items+=("In PyCharm öffnen")
         items+=("Terminal im Projekt")
         has dateien && items+=("Im Dateimanager öffnen")
-        items+=("Job-Logs")
+        items+=("Pakete installieren …" "Job-Logs")
         can_ide && items+=("PyCharm-Log")
         items+=("Cache leeren …" "Umbenennen" "Löschen" "Zurück")
         c=$(ui_choose "Projekt $p" "${items[@]}") || return
@@ -215,7 +257,9 @@ project_actions() {   # $1 Projekt
             "In PyCharm"*) run_open "$p"; return ;;
             Terminal*)     run_shell "$p" ;;
             "Im Datei"*)   run_files "$S_PROJECTS/$p/code" ;;
-            Job-Logs)      "$KI" logs "$p" 2>/dev/null || { say_err "Noch keine Jobs."; pause; } ;;
+            Pakete*)       install_packages "$p" ;;
+            Job-Logs)      if "$KI" jobs "$p" 2>/dev/null | grep -q .; then show_log "$p"
+                           else say_err "Noch keine Jobs in $p."; pause; fi ;;
             PyCharm-Log)   less -R +G "$S_PROJECTS/$p/.ki/ide.log" 2>/dev/null || { say_err "Noch kein PyCharm-Log."; pause; } ;;
             Cache*)        clean_dialog "$p" ;;
             Umbenennen)    new=$(ui_input "Neuer Name für $p" "a-z A-Z 0-9 - _" "$p") || continue
@@ -233,7 +277,8 @@ jobs_menu() {
     local c items
     while :; do
         draw_header
-        items=("Job starten" "Jobs ansehen" "JupyterLab starten")
+        items=("Job starten" "Jobs ansehen")
+        has fernzugriff && items+=("JupyterLab für den Zweitrechner (SSH-Tunnel)")
         has monitor && items+=("GPU-Monitor (q = zurück)")
         has menue && items+=("CPU-Modus: $S_POWER → umschalten")
         items+=("Zurück")
@@ -295,7 +340,7 @@ system_menu() {
         draw_header
         items=("Status" "Diagnose und Dateileichen-Suche" "System aktualisieren (apt)" "Setup aktualisieren (Git)")
         has pycharm && items+=("PyCharm aktualisieren")
-        items+=("Host-Terminal (sudo, apt)" "Handbuch lesen" "Neu starten" "Zurück")
+        items+=("Host-Terminal (sudo, apt)" "Neu starten" "Zurück")
         c=$(ui_choose "System" "${items[@]}") || return
         case $c in
             Status)        clear_screen; "$KI" status; pause ;;
@@ -308,18 +353,28 @@ system_menu() {
                                 printf 'Host-Shell – hier wirken sudo und apt. exit = zurück zum Menü\n\n' >&2
                                 bash -i
                            fi ;;
-            Handbuch*)     handbook ;;
             "Neu starten") ui_confirm "Rechner neu starten?" no && { sudo -n systemctl reboot 2>/dev/null || systemctl reboot; } ;;
             *)             return ;;
         esac
     done
 }
 
-handbook() {   # Doku offline lesen
-    local docs=() d c
-    for d in "$REPO"/README.md "$REPO"/docs/*.md; do docs+=("${d#"$REPO"/}"); done
-    c=$(ui_choose "Handbuch" "${docs[@]}" "Zurück") || return
-    [ -f "$REPO/$c" ] && ui_pager < "$REPO/$c"
+help_menu() {   # Hilfe offline: Einstieg, Tasten und Befehle, alle Handbücher (Titel = erste Zeile)
+    local files=() titles=() d c i
+    for d in "$REPO"/README.md "$REPO"/docs/*.md; do
+        [ "${d##*/}" = ERSTE-SCHRITTE.md ] && continue
+        files+=("$d"); titles+=("Handbuch: $(sed -n '1s/^# *//p' "$d")")
+    done
+    while :; do
+        draw_header
+        c=$(ui_choose "Hilfe" "Erste Schritte – so arbeitest du hier" "Tasten und Befehle" "${titles[@]}" "Zurück") || return
+        case $c in
+            Erste*)     ui_doc "$REPO/docs/ERSTE-SCHRITTE.md" ;;
+            Tasten*)    "$KI" help | ui_pager ;;
+            Handbuch:*) for i in "${!titles[@]}"; do [ "${titles[$i]}" = "$c" ] && ui_doc "${files[$i]}"; done ;;
+            *)          return ;;
+        esac
+    done
 }
 
 power_off() {
@@ -343,7 +398,10 @@ main_menu() {
         can_ide && items+=("Projekt öffnen")
         items+=("Neues Projekt" "Terminal im Projekt" "Training & Jobs" "Projekte verwalten")
         has dateien && items+=("Dateien & USB")
-        items+=("Einstellungen" "System" "Hilfe & Tasten" "Ausschalten")
+        items+=("Einstellungen" "System" "Hilfe & Erste Schritte" "Ausschalten")
+        if can_ide; then ui_hint "↑↓ Enter wählen · Esc zurück · Win+2 PyCharm · Win+T Terminal · Win+D Dateien"
+        elif [ $GUI = 1 ]; then ui_hint "↑↓ Enter wählen · Esc zurück · Win+T Terminal · Win+D Dateien"
+        else ui_hint "↑↓ Enter wählen · Esc zurück"; fi
         c=$(ui_choose "" "${items[@]}") || continue
         case $c in
             "▶ Zu PyCharm"*)    i3ws "$S_WS_IDE" ;;
@@ -357,7 +415,7 @@ main_menu() {
             Dateien*)           files_menu ;;
             Einstellungen)      "$KI" einstellungen ;;
             System)             system_menu ;;
-            Hilfe*)             "$KI" help | ui_pager ;;
+            Hilfe*)             help_menu ;;
             Ausschalten)        power_off ;;
         esac
     done

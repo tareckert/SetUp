@@ -14,7 +14,10 @@ export GUM_CHOOSE_CURSOR_FOREGROUND=$UI_ACC GUM_CHOOSE_HEADER_FOREGROUND=$UI_DIM
        GUM_CONFIRM_PROMPT_FOREGROUND=$UI_FG GUM_CONFIRM_SELECTED_BACKGROUND=$UI_ACC \
        GUM_CONFIRM_SELECTED_FOREGROUND=$UI_BG GUM_CONFIRM_UNSELECTED_BACKGROUND="#3C3F41" \
        GUM_CONFIRM_UNSELECTED_FOREGROUND=$UI_FG \
-       GUM_FILE_CURSOR_FOREGROUND=$UI_ACC GUM_FILE_HEADER_FOREGROUND=$UI_DIM
+       GUM_FILE_CURSOR_FOREGROUND=$UI_ACC GUM_FILE_HEADER_FOREGROUND=$UI_DIM \
+       GUM_PAGER_BORDER_FOREGROUND=$UI_ACC GUM_PAGER_FOREGROUND=$UI_FG
+# gums englische Tastenhilfe aus – das Menü zeigt seine eigene (ui_hint), Esc = zurück gilt überall
+export GUM_CHOOSE_SHOW_HELP=false GUM_FILTER_SHOW_HELP=false GUM_INPUT_SHOW_HELP=false GUM_CONFIRM_SHOW_HELP=false
 
 HAVE_GUM=0
 command -v gum >/dev/null 2>&1 && HAVE_GUM=1
@@ -87,7 +90,19 @@ ui_confirm() {   # ui_confirm <frage> [no] [sekunden] → 0 = ja; bei Zeitablauf
     else read -r -p "$INDENT$1 [j/N] " a </dev/tty || return 1; fi
     [[ $a =~ ^[jJyY] ]]
 }
-ui_pager() { if [ $HAVE_GUM = 1 ]; then gum pager; else less -R; fi; }
+ui_hint() {   # ui_hint <text> – dezente, mittige Zeile (z. B. Tastenhinweise unter dem Menükopf)
+    local cols pad
+    cols=$(tput cols 2>/dev/null || echo 80)
+    pad=$(( (cols - ${#1}) / 2 )); [ $pad -lt 2 ] && pad=2
+    if [ $HAVE_GUM = 1 ]; then gum style --foreground "$UI_DIM" "$(printf '%*s%s' "$pad" '' "$1")" >&2
+    else printf '%*s%s\n' "$pad" '' "$1" >&2; fi
+    printf '\n' >&2
+}
+ui_pager() { if [ $HAVE_GUM = 1 ]; then gum pager --show-line-numbers=false; else less -R; fi; }
+ui_doc() {   # ui_doc <markdown-datei> – Handbuch formatiert anzeigen (q = zurück)
+    if [ $HAVE_GUM = 1 ]; then gum format --theme dark < "$1" | gum pager --show-line-numbers=false
+    else less -R "$1"; fi
+}
 
 ui_box() {   # ui_box <zeile…> – mittiger Kasten (Menükopf)
     local cols w=0 x ml lines=()

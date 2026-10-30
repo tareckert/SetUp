@@ -28,6 +28,8 @@ KI_SHARED="$HOME/shared_data"
 KI_PYCHARM="/opt/ki/pycharm/current"
 KI_IDE_XMX="2048m"
 KI_IDE_MAX=3                       # höchstens so viele PyCharm-Fenster gleichzeitig
+# Ergänzt ki in PyCharms vmoptions: kein Update-Check und keine Tipps/Rückfragen beim Start
+KI_IDE_FLAGS="-XX:+UseStringDeduplication -Dide.no.platform.update=true -Didea.initially.ask.config=never -Djb.consents.confirmation.enabled=false -Dide.show.tips.on.startup.default.value=false"
 KI_JUPYTER_PORT=8888
 KI_USE_UV=auto
 # shellcheck source=/dev/null
@@ -36,6 +38,9 @@ KI_USE_UV=auto
 KI_WS_MENU="1:Menü" KI_WS_IDE="2:IDE" KI_WS_EXTRA="3:Extra"   # wie in oberflaeche/i3.conf
 KI_RUN="${XDG_RUNTIME_DIR:-/tmp/ki-$(id -u)}/ki"
 KI_PC="$KI_DIR/pycharm"            # PyCharm-Einstellungen (Funktion pycharm)
+# Git-Einstellungen und gespeicherte Zugangsdaten – gemeinsam für Host, alle Projekte und PyCharm
+KI_GIT="$KI_DIR/basis/git"
+export GIT_CONFIG_GLOBAL="$KI_GIT/config"
 KERKER=()
 KERKER_ENV=()
 
@@ -96,6 +101,27 @@ i3msg() {   # i3 steuern, wenn vorhanden – sonst still nichts tun
 }
 use_uv() { [ "$KI_USE_UV" != 0 ] && command -v uv >/dev/null 2>&1; }
 
+# Gemeinsame Git-Einstellungen einmalig anlegen. Zugangsdaten (z. B. ein GitHub-Token) speichert Git
+# nach der ersten erfolgreichen Anmeldung in $KI_GIT/credentials – nur für dich lesbar.
+git_prepare() {
+    local k v
+    [ -f "$KI_GIT/credentials" ] && return 0
+    mkdir -p "$KI_GIT" && chmod 700 "$KI_GIT" || return 0
+    # alte Einstellungen übernehmen
+    [ -f "$HOME/.gitconfig" ] && [ ! -f "$KI_GIT/config" ] && cp "$HOME/.gitconfig" "$KI_GIT/config"
+    ( umask 077; : >> "$KI_GIT/credentials" )
+    command -v git >/dev/null 2>&1 || return 0
+    # Der Pfad gilt auf dem Host und im Kerker (dort liegt der Ordner unter ~/.config/git)
+    while read -r k v; do
+        git config --global --get "$k" >/dev/null || git config --global "$k" "$v"
+    done <<'EOF'
+credential.helper store --file "${GIT_CONFIG_GLOBAL%/*}/credentials"
+init.defaultBranch main
+pull.rebase false
+core.editor nano
+EOF
+}
+
 # ------------------------------------------------------------------ PyCharm-Fenster
 # Jedes PyCharm-Fenster belegt einen "Platz" 1…KI_IDE_MAX mit eigener Sperre.
 # Platz 1 nutzt die Einstellungen direkt; weitere Plätze bekommen beim Start eine Kopie davon.
@@ -120,9 +146,10 @@ job_alive() {   # $1 = PID aus der .pid-Datei; schützt vor wiederverwendeten PI
     [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null &&
         [[ $(tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null) == *" _job "* ]]
 }
-job_state() {   # $1 Projekt, $2 Job-ID → läuft | fertig | fehler (rc) | abgebrochen
+job_state() {   # $1 Projekt, $2 Job-ID → läuft | fertig | gestoppt | fehler (rc) | abgebrochen
     local d rc; d=$(job_dir "$1")
     if [ -f "$d/$2.pid" ] && job_alive "$(cat "$d/$2.pid" 2>/dev/null)"; then echo "läuft"
+    elif [ -f "$d/$2.stop" ]; then echo "gestoppt"         # mit ki stop beendet
     elif [ -f "$d/$2.exit" ]; then
         rc=$(cat "$d/$2.exit")
         if [ "$rc" = 0 ]; then echo "fertig"; else echo "fehler ($rc)"; fi
@@ -169,10 +196,13 @@ kerker_build() {
              --bind "$P" "$H"
              --chdir "$H/code")
 
-    # Nach dem Home-Swap gezielt wieder einblenden – nur lesbar
-    for f in .gitconfig .ssh/config .ssh/known_hosts; do
+    # Nach dem Home-Swap gezielt wieder einblenden: SSH-Einstellungen nur lesbar, Git-Einstellungen
+    # und Zugangsdaten beschreibbar – ein "git config --global" oder Login gilt dann überall
+    for f in .ssh/config .ssh/known_hosts; do
         [ -e "$H/$f" ] && KERKER+=(--ro-bind "$H/$f" "$H/$f")
     done
+    git_prepare
+    [ -d "$KI_GIT" ] && KERKER+=(--bind "$KI_GIT" "$H/.config/git" --setenv GIT_CONFIG_GLOBAL "$H/.config/git/config")
     [ -d "$KI_SHARED" ] && KERKER+=(--ro-bind "$KI_SHARED" "$H/shared_data")
 
     if [ -n "${DISPLAY:-}" ]; then
@@ -282,9 +312,10 @@ HISTFILE="$HOME/.bash_history"; HISTSIZE=5000; HISTCONTROL=ignoredups:erasedups
 alias ls='ls --color=auto' ll='ls -alF' grep='grep --color=auto'
 PS1='\[\e[38;5;173m\][${KI_PROJECT}]\[\e[0m\] \w \$ '
 if [ -z "${KI_JOB:-}" ] && [ -z "${TERMINAL_EMULATOR:-}" ]; then
-    printf '\e[2mKerker %s · %s · Code in ~/code · exit = zurück\e[0m\n' "$KI_PROJECT" "$(python -V 2>&1)"
-    command -v uv >/dev/null 2>&1 && [ "${KI_USE_UV:-auto}" != 0 ] &&
-        printf '\e[2mPakete schnell installieren: uv pip install <paket>\e[0m\n'
+    printf '\e[2mProjekt %s · %s · Code in ~/code · exit = zurück\e[0m\n' "$KI_PROJECT" "$(python -V 2>&1)"
+    if command -v uv >/dev/null 2>&1 && [ "${KI_USE_UV:-auto}" != 0 ]; then _p='uv pip install'; else _p='pip install'; fi
+    printf '\e[2mPaket installieren: %s <paket> · Skript starten: python <datei>.py\e[0m\n' "$_p"; unset _p
+    [ -n "${DISPLAY:-}" ] && printf '\e[2mKopieren/Einfügen: Strg+Shift+C / Strg+Shift+V\e[0m\n'
 fi
 [ -f "$HOME/.bashrc.local" ] && . "$HOME/.bashrc.local"
 EOF
@@ -307,6 +338,12 @@ pip_install() {   # pip_install <projekt> <argumente…> – im Kerker
     local name=$1; shift
     kerker_run "$name" shell /bin/sh -c "$PIP_SCRIPT" ki-pip "$@"
 }
+deps_args() {   # was "Pakete des Projekts installieren" bedeutet: requirements.txt oder pyproject.toml
+    local c; c="$(proj_dir "$1")/code"
+    if [ -f "$c/requirements.txt" ]; then echo "-r requirements.txt"
+    elif [ -f "$c/pyproject.toml" ] || [ -f "$c/setup.py" ]; then echo "-e ."
+    else return 1; fi
+}
 
 pycharm_launcher() {
     if [ -x "$KI_PYCHARM/bin/pycharm" ]; then echo "$KI_PYCHARM/bin/pycharm"
@@ -316,23 +353,27 @@ pycharm_launcher() {
         return 1
     fi
 }
-# Speicherobergrenze für PyCharm setzen, falls noch keine eigene existiert.
-# Ändern: Menü → Einstellungen, ki pycharm speicher <MB> oder in PyCharm: Help → Change Memory Settings.
+# PyCharm-Startoptionen ergänzen: Speicherobergrenze (nur wenn noch keine eigene gesetzt ist) und
+# KI_IDE_FLAGS. Speicher ändern: Menü → Einstellungen, ki pycharm speicher <MB> oder in PyCharm:
+# Help → Change Memory Settings. Eigene Zeilen in der Datei bleiben unangetastet.
 ensure_vmoptions() {
-    local dd f
+    local dd f o
     dd=$(sed -n 's/.*"dataDirectoryName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
         "$KI_PYCHARM/product-info.json" 2>/dev/null | head -n1)
     [ -n "$dd" ] || return 0
     f="$KI_PC/config/$dd/pycharm64.vmoptions"
-    [ -f "$f" ] && return 0
     mkdir -p "${f%/*}"
-    printf -- '-Xmx%s\n-XX:+UseStringDeduplication\n' "$KI_IDE_XMX" > "$f"
+    grep -qs '^-Xmx' "$f" || printf -- '-Xmx%s\n' "$KI_IDE_XMX" >> "$f"
+    for o in $KI_IDE_FLAGS; do   # schon vorhanden (auch mit anderem Wert)? Dann bleibt es
+        grep -qsF -- "${o%%=*}" "$f" || printf '%s\n' "$o" >> "$f"
+    done
 }
 
 # ------------------------------------------------------------------ Vorlagen
 # Eingebaut: features/basis/templates/<name>; eigene: ~/.ki/basis/vorlagen/<name> (gehen vor).
 # Eine Vorlage ist ein Ordner, der nach code/ kopiert wird. Optional darin: Datei "profil"
-# mit ml, py oder node (Umgebung im Kerker); ohne sie gilt der Name, sonst py.
+# mit ml, py oder node (Umgebung im Kerker; ohne sie gilt der Name, sonst py) und Datei
+# "beschreibung" (eine Zeile fürs Menü). Beide werden nicht mitkopiert.
 template_dir() {
     local t=$1
     if [ -d "$KI_DIR/basis/vorlagen/$t" ]; then echo "$KI_DIR/basis/vorlagen/$t"
@@ -342,16 +383,17 @@ template_dir() {
 template_profile() {
     local d=$1 t=${1##*/}
     if [ -f "$d/profil" ]; then head -n1 "$d/profil"
-    else case $t in ml|node) echo "$t" ;; *) echo py ;; esac; fi
+    else case $t in ml|llm) echo ml ;; node) echo node ;; *) echo py ;; esac; fi
 }
-cmd__vorlagen() {   # Name und Beschreibung aller Vorlagen
-    local d t seen=" "
-    for d in "$KI_DIR"/basis/vorlagen/*/ "$REPO"/features/basis/templates/*/; do
+cmd__vorlagen() {   # Name und Beschreibung aller Vorlagen – die häufigsten zuerst, eigene danach
+    local d t seen=" " b="$REPO/features/basis/templates"
+    for d in "$b"/ml/ "$b"/llm/ "$b"/py/ "$b"/node/ "$KI_DIR"/basis/vorlagen/*/ "$b"/*/; do
+        [ -d "$d" ] || continue
         d=${d%/}; t=${d##*/}
         [ "$t" = common ] && continue
         [[ $seen == *" $t "* ]] && continue
         seen+="$t "
-        printf '%s\t%s\n' "$t" "$(sed -n '1s/^# *//p' "$d/README.md" 2>/dev/null | sed 's/@NAME@/Projekt/' || true)"
+        printf '%s\t%s\n' "$t" "$(head -n1 "$(template_dir "$t")/beschreibung" 2>/dev/null)"   # eigene gehen vor
     done
 }
 
@@ -375,9 +417,10 @@ finish_new() {   # Python-Umgebung, ggf. Pakete, Hinweise
     if [ "$(proj_profile "$name")" = node ] && ! command -v node >/dev/null 2>&1; then
         warn "Node.js ist nicht installiert: ki setup install node"
     fi
-    if [ "$torch" = 1 ] && [ -f "$P/code/requirements.txt" ]; then
-        info "Installiere requirements.txt …"
-        pip_install "$name" -r requirements.txt || warn "Installation fehlgeschlagen – später im Projekt-Terminal wiederholen."
+    if [ "$torch" = 1 ] && deps_args "$name" >/dev/null; then
+        cmd_pakete "$name" || warn "Später nachholen: Menü → Projekte verwalten → Pakete, oder ki pakete $name"
+    elif deps_args "$name" >/dev/null; then
+        say_hint "Pakete des Projekts installieren: ki pakete $name  (Menü: Projekte verwalten → Pakete)"
     fi
     info "Projekt '$name' bereit ($(proj_profile "$name")): $P"
     case $next in
@@ -400,13 +443,13 @@ cmd_new() {
             *)         [ -z "$name" ] || die "Nur ein Projektname erlaubt."; name=$1; shift ;;
         esac
     done
-    [ -n "$name" ] || die "Aufruf: ki new <name> [--vorlage ml|py|node|eigene] [--torch] [--python 3.12] [--open|--shell]"
+    [ -n "$name" ] || die "Aufruf: ki new <name> [--vorlage ml|llm|py|node|eigene] [--torch] [--python 3.12] [--open|--shell]"
     tdir=$(template_dir "${vorlage:-py}") || die "Vorlage '${vorlage}' gibt es nicht (ki new --vorlagen zeigt alle)."
     prof=$(template_profile "$tdir")
     new_skeleton "$name" "$prof" "$py"
     P=$(proj_dir "$name")
     [ -f "$REPO/features/basis/templates/common/gitignore" ] && cp "$REPO/features/basis/templates/common/gitignore" "$P/code/.gitignore"
-    cp -r "$tdir/." "$P/code/" && rm -f "$P/code/profil"
+    cp -r "$tdir/." "$P/code/" && rm -f "$P/code/profil" "$P/code/beschreibung"
     sed -i "s/@NAME@/$name/g" "$P/code/README.md" "$P/code/package.json" 2>/dev/null
     if command -v git >/dev/null 2>&1; then
         git -C "$P/code" init -q -b main 2>/dev/null || git -C "$P/code" init -q
@@ -451,8 +494,6 @@ cmd_import() {   # ki import <ordner> [name] – vorhandenen Code (z. B. vom USB
         { rm -rf "$P"; die "Kopieren fehlgeschlagen."; }
     grep -qsiE '^(torch|tensorflow|jax|transformers)' "$P/code/requirements.txt" && echo ml > "$P/.ki/profile"
     finish_new "$name" 0 ""
-    [ -f "$P/code/requirements.txt" ] && say_hint "Pakete installieren: ki shell $name -- uv pip install -r requirements.txt"
-    return 0
 }
 
 cmd_open() {
@@ -469,6 +510,7 @@ cmd_open() {
     pycharm_launcher >/dev/null || exit 1
     prepare_project "$name" || die "Projekt '$name' konnte nicht vorbereitet werden."
     ensure_vmoptions
+    [ -e "$KI_PC/.gestartet" ] || cmd__pycharm_hinweis
     if [ "${KI_FOREGROUND:-0}" = 1 ]; then cmd__ide "$name" "$slot"; fi
     setsid -f "$SELF" _ide "$name" "$slot" </dev/null >/dev/null 2>&1
     info "PyCharm startet mit '$name' auf der Arbeitsfläche IDE (zurück zum Menü: Win+1)."
@@ -477,6 +519,19 @@ cmd_open() {
         say_hint "Einstellungen – Änderungen daran bitte im ersten Fenster machen."
         say_hint "Nebeneinander: Win+E · als Reiter: Win+W · auf den zweiten Monitor: Win+Shift+O"
     fi
+}
+
+cmd__pycharm_hinweis() {   # was beim allerersten Start von PyCharm auf dich zukommt
+    cat <<'EOF2'
+PyCharm startet zum ersten Mal. Einmalig fragt es nach:
+  1. Nutzungsbedingungen – lesen und bestätigen.
+  2. Lizenz – kostenlos weiter oder aktivieren (ohne Browser: per Aktivierungscode).
+  3. "Trust project?" – "Trust Project" wählen. Das gilt danach für alle Projekte,
+     weil jedes Projekt im Kerker unter ~/code liegt.
+Die Python-Umgebung (code/.venv) erkennt PyCharm selbst. Beim ersten Öffnen liest es
+die installierten Pakete ein (bei PyTorch ein paar Minuten, Fortschritt unten rechts),
+danach reagiert es flüssig. Zurück zum Menü: Win+1 · zu PyCharm: Win+2
+EOF2
 }
 
 # Intern: hält die Sperre des Platzes, startet PyCharm im Kerker und holt danach das Menü zurück
@@ -500,6 +555,7 @@ cmd__ide() {
         printf '%s' "$name" > "$P/code/.idea/.name"
     fi
     i3msg workspace "$KI_WS_IDE"
+    touch "$KI_PC/.gestartet" 2>/dev/null           # für den Hinweis zum ersten Start (ki _state)
     printf '# PyCharm-Start %s · Projekt %s · Fenster %s\n' "$(date '+%F %T')" "$name" "$slot" > "$P/.ki/ide.log"
     kerker_run "$name" gui "$slot" /bin/sh -c "$IDE_WRAPPER" ki-ide "$launcher" "$HOME/code" >>"$P/.ki/ide.log" 2>&1
     rc=$?
@@ -516,6 +572,21 @@ cmd_shell() {
     prepare_project "$name" || die "Projekt '$name' konnte nicht vorbereitet werden."
     [ $# -gt 0 ] || set -- bash
     kerker_run "$name" shell "$@"
+}
+
+# Pakete ins Projekt installieren (braucht Internet). Ohne Paketnamen: requirements.txt bzw. pyproject.toml
+cmd_pakete() {
+    local name=${1:-} a
+    need_project "$name"; shift
+    if [ $# -eq 0 ]; then
+        a=$(deps_args "$name") || die "Welche Pakete? Aufruf: ki pakete $name <paket …>  (oder eine requirements.txt anlegen)"
+        # shellcheck disable=SC2086  # "-r requirements.txt" sind zwei Argumente
+        set -- $a
+    fi
+    prepare_project "$name" || die "Projekt '$name' konnte nicht vorbereitet werden."
+    info "Installiere in '$name': $* …"
+    pip_install "$name" "$@" || { warn "Installation fehlgeschlagen – Internet da? Paketname richtig?"; return 1; }
+    info "Pakete installiert."
 }
 
 # Terminal im eigenen Fenster: in der Oberfläche neben dem aktuellen Fenster (ki fenster),
@@ -546,9 +617,10 @@ cmd_run() {
     need_project "$name"; shift
     case ${1:-} in
         --sh) [ -n "${2:-}" ] || die "--sh braucht eine Befehlszeile"; label=$2; set -- bash -c "$2" ;;
-        --)   shift; label="$*" ;;
-        *)    label="$*" ;;
+        --)   shift ;;
     esac
+    # Als Shell-Zeile merken (mit Anführungszeichen, wo nötig) – so lässt sie sich neu starten
+    [ -n "${label:-}" ] || { label=$(printf '%q ' "$@"); label=${label% }; }
     [ $# -gt 0 ] || die "Aufruf: ki run <projekt> -- <befehl …>   oder   ki run <projekt> --sh \"befehlszeile\""
     prepare_project "$name" || die "Projekt '$name' konnte nicht vorbereitet werden."
     dir=$(job_dir "$name")
@@ -571,10 +643,26 @@ cmd__job() {
     KERKER_ENV=(--setenv PYTHONUNBUFFERED 1 --setenv KI_JOB "$id")
     kerker_run "$name" shell "$@"
     rc=$?
+    [ "$rc" != 0 ] && [ ! -e "$dir/$id.stop" ] && job_tip "$name" "$dir/$id.log"
     echo "$rc" > "$dir/$id.exit"
     rm -f "$dir/$id.pid"
     printf '\n# Ende %s · Exit-Code %s\n' "$(date '+%F %T')" "$rc"
     exit "$rc"
+}
+job_tip() {   # nach einem Fehler: bekannte Ursachen im Log erkennen und den nächsten Schritt nennen
+    local name=$1 log=$2 m
+    m=$(grep -o "No module named '[A-Za-z0-9_]*" "$log" 2>/dev/null | tail -n1)
+    if [ -n "$m" ]; then
+        m=${m##*\'}
+        case $m in   # Modulname ≠ Paketname
+            cv2) m=opencv-python ;; sklearn) m=scikit-learn ;; PIL) m=pillow ;; yaml) m=pyyaml ;;
+            skimage) m=scikit-image ;; dotenv) m=python-dotenv ;; bs4) m=beautifulsoup4 ;;
+        esac
+        printf '\n# Tipp: Paket fehlt – installieren mit: ki pakete %s %s\n' "$name" "$m"
+    elif grep -qE 'CUDA out of memory|OutOfMemoryError' "$log" 2>/dev/null; then
+        printf '\n# Tipp: Grafikspeicher (VRAM) voll – kleinere Batchgröße, fp16 (autocast) oder Gradient\n'
+        printf '#       Accumulation; läuft PyCharm/ein zweiter Job auf der GPU? Siehe docs/KI-PRAXIS.md\n'
+    fi
 }
 
 cmd_jobs() {
@@ -602,8 +690,9 @@ cmd_logs() {
     f="$(job_dir "$name")/$id.log"
     [ -f "$f" ] || die "Kein Log für Job $id."
     if [ ! -t 1 ]; then cat "$f"
-    elif [ "$(job_state "$name" "$id")" = "läuft" ]; then less -R +F "$f"   # Strg+C stoppt Mitlaufen, q beendet
-    else less -R +G "$f"
+    elif [ "$(job_state "$name" "$id")" = "läuft" ]; then   # Strg+C hält das Mitlaufen an, F setzt es fort
+        less -R -~ -Ps"Log $name · q = schließen · F = live mitlaufen · Pfeile = blättern" +F "$f"
+    else less -R -~ -Ps"Log $name · q = schließen · Pfeile = blättern · / = suchen" +G "$f"
     fi
 }
 
@@ -619,6 +708,7 @@ cmd_stop() {
     job_alive "$pid" || { info "Job $id läuft nicht."; return 0; }
     # Wie Strg+C: das Programm darf aufräumen (Checkpoint speichern)
     info "Stoppe Job $id – das Programm bekommt Strg+C und darf aufräumen …"
+    touch "$(job_dir "$name")/$id.stop"
     kill -INT -- "-$pid" 2>/dev/null
     for _ in $(seq 30); do job_alive "$pid" || { info "Job $id beendet."; return 0; }; sleep 1; done
     warn "Keine Reaktion nach 30 s – beende hart."
@@ -721,6 +811,27 @@ cmd_mv() {
     mv -- "$(proj_dir "$old")" "$(proj_dir "$new")" && info "'$old' heißt jetzt '$new'."
 }
 
+# Git: Name/E-Mail für Commits und gespeicherte Zugangsdaten – gelten für alle Projekte
+cmd_git() {
+    local n e
+    git_prepare
+    case ${1:-} in
+        name)
+            [ $# -ge 3 ] || die "Aufruf: ki git name \"Vorname Nachname\" mail@beispiel.de"
+            { git config --global user.name "$2" && git config --global user.email "$3"; } || die "Speichern fehlgeschlagen."
+            info "Git-Commits zeichnen jetzt mit: $2 <$3>" ;;
+        vergessen)
+            : > "$KI_GIT/credentials" && info "Gespeicherte Git-Zugangsdaten gelöscht – beim nächsten Push fragt Git neu." ;;
+        ""|status)
+            n=$(git config --global user.name 2>/dev/null) e=$(git config --global user.email 2>/dev/null)
+            printf 'Name/E-Mail:   %s\n' "${n:-– (setzen: ki git name \"Vorname Nachname\" mail@beispiel.de)}${e:+ <$e>}"
+            n=$(grep -c . "$KI_GIT/credentials" 2>/dev/null)
+            printf 'Zugangsdaten:  %s gespeichert (Git fragt beim ersten Push und merkt sie sich)\n' "${n:-0}"
+            printf 'Einstellungen: %s\n' "$KI_GIT/config" ;;
+        *) die "Aufruf: ki git [status | name \"Name\" mail | vergessen]" ;;
+    esac
+}
+
 power_mode() {
     local g
     g=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null) || { echo "unbekannt"; return; }
@@ -794,6 +905,9 @@ cmd_doctor() {
             bad "Treiber antwortet nicht: $out" "Neustart; nach Kernel-Update: dkms status; sonst ki setup reinstall nvidia"
         else
             IFS=',' read -r v f _ _ _ <<< "$out"; ok "$v · Treiber${f}"
+            f=${f//[^0-9.]/}
+            [ "${f%%.*}" -lt 580 ] 2>/dev/null &&
+                hint "Treiber $f ist älter als 580 – PyTorch von PyPI (CUDA 13) findet dann keine GPU" "ki setup reinstall nvidia"
             if [[ $(cut -d, -f3 <<< "$out") == *Enabled* ]]; then ok "Persistence Mode an"
             else hint "Persistence Mode aus" "sudo systemctl start ki-gpu"; fi
             if [[ $(cut -d, -f4 <<< "$out") == *Enabled* ]]; then
@@ -819,6 +933,10 @@ cmd_doctor() {
         if grep -q '"instance":"ki-menu"' <<< "$(i3-msg -t get_tree 2>/dev/null)"; then ok "Menü-Fenster vorhanden"
         else hint "Menü-Fenster nicht gefunden" "Win+Shift+R"; fi
     fi
+
+    sect "Git"
+    if v=$(git config --global user.name 2>/dev/null) && [ -n "$v" ]; then ok "Commits als $v <$(git config --global user.email 2>/dev/null)>"
+    else hint "Kein Name für Git-Commits" "Menü → Einstellungen → Git, oder ki git name \"Vorname Nachname\" mail@beispiel.de"; fi
 
     sect "Speicher"
     ok "$(free -m | awk '/^Mem:/ {printf "RAM %.1f GiB, davon %.1f GiB verfügbar", $2/1024, $7/1024}')"
@@ -869,10 +987,19 @@ cmd__state() {
     printf 'ide=%s\nlast=%s\njobs=%s\npower=%s\nfeatures=%s\nprojects=%s\nws_menu=%s\nws_ide=%s\nws_extra=%s\nrepo=%s\n' \
         "$(ide_projects | paste -sd, -)" "$last" "$jobs" "$(power_mode)" "$feats" "$KI_PROJECTS" \
         "$KI_WS_MENU" "$KI_WS_IDE" "$KI_WS_EXTRA" "$REPO"
+    printf 'pycharm_neu=%s\ngit_name=%s\n' "$([ -e "$KI_PC/.gestartet" ] && echo 0 || echo 1)" \
+        "$(git config --global user.name 2>/dev/null)"
 }
-cmd__lastcmd() {
-    local id; id=$(job_ids "$1" | head -n1)
-    [ -n "$id" ] && cat "$(job_dir "$1")/$id.cmd"
+cmd__jobcmd() { cat "$(job_dir "$1")/$2.cmd" 2>/dev/null; }
+cmd__lastcmd() {   # letzter Job-Befehl, sonst ein Vorschlag aus den Dateien des Projekts
+    local id c f; id=$(job_ids "$1" | head -n1)
+    if [ -n "$id" ]; then cat "$(job_dir "$1")/$id.cmd"; return 0; fi
+    c="$(proj_dir "$1")/code"
+    for f in train.py train_example.py main.py; do
+        [ -f "$c/$f" ] && { echo "python $f"; return 0; }
+    done
+    [ -f "$c/package.json" ] && echo "npm start"
+    return 0
 }
 
 feature_cmd() {   # gibt den Pfad eines Funktions-Befehls aus, wenn die Funktion installiert ist
@@ -884,7 +1011,7 @@ feature_cmd() {   # gibt den Pfad eines Funktions-Befehls aus, wenn die Funktion
 }
 cmd__commands() {
     local f
-    echo "new clone import open shell terminal run jobs logs stop jupyter list clean rm mv status doctor power setup update help"
+    echo "new clone import open shell terminal pakete run jobs logs stop jupyter list clean rm mv git status doctor power setup update help"
     for f in "$REPO"/features/*/bin/ki-*; do
         has "$(basename "$(dirname "$(dirname "$f")")")" && basename "$f" | sed 's/^ki-//'
     done
@@ -895,25 +1022,28 @@ cmd_help() {
 ${C_B}ki $KI_VERSION – der eine Befehl der KI-Workstation${C_0}
 
 ${C_B}Projekte${C_0}
-  ki new <name> [--vorlage ml|py|node|eigene] [--torch] [--python 3.12] [--open|--shell]
+  ki new <name> [--vorlage ml|llm|py|node|eigene] [--torch] [--python 3.12] [--open|--shell]
   ki clone <git-url> [name] [--install]   Git-Repo als Projekt (requirements.txt wird erkannt)
   ki import <ordner> [name]               vorhandenen Code übernehmen, z. B. vom USB-Stick
   ki open <name>              PyCharm im Kerker; ein zweites Projekt öffnet ein zweites Fenster
   ki shell <name> [befehl…]   Terminal/Befehl im Kerker, ohne IDE (spart 1,5–2 GB RAM)
   ki terminal [name]          dasselbe im eigenen Fenster neben dem aktuellen (Win+T)
+  ki pakete <name> [paket…]   Pakete installieren (ohne Namen: requirements.txt)
   ki list [--size]   ki clean <name> [ordner…] | --all   ki mv <alt> <neu>   ki rm <name>
-  Eigene Vorlagen: Ordner nach ~/.ki/basis/vorlagen/<name>/ legen (optional Datei "profil": ml|py|node)
+  Eigene Vorlagen: Ordner nach ~/.ki/basis/vorlagen/<name>/ legen (optional Dateien "profil": ml|py|node
+                   und "beschreibung": eine Zeile fürs Menü)
 
 ${C_B}Training & KI${C_0}
   ki run <name> -- python train.py      Job im Hintergrund (läuft weiter, auch ohne Menü)
   ki run <name> --sh "befehlszeile"     dito als Shell-Befehlszeile
   ki jobs [name]   ki logs <name> [id]   ki stop <name> [id]   (Stopp = Strg+C, dann hart)
-  ki jupyter <name> [port]              JupyterLab (Browser hier oder per SSH-Tunnel)
+  ki jupyter <name> [port]              JupyterLab für den Zweitrechner (SSH-Tunnel)
   ki power [performance|balanced]       CPU-Leistungsmodus
 
 ${C_B}Funktionen & System${C_0}
   ki setup                    Funktionen wählen (installieren/entfernen)
   ki setup list | files <f> | remove <f> | update
+  ki git [name "Name" mail | vergessen]   Git-Name und Zugangsdaten (für alle Projekte)
   ki status   ki doctor (auch Dateileichen-Suche)
 EOF
     has menue && echo "  ki menu                     Menü (startet in der Oberfläche automatisch)"
@@ -953,6 +1083,9 @@ case $cmd in
     import)          cmd_import "$@" ;;
     open)            cmd_open "$@" ;;
     shell|sh)        cmd_shell "$@" ;;
+    pakete|pip)      cmd_pakete "$@" ;;
+    git)             cmd_git "$@" ;;
+    _pycharm_hinweis) cmd__pycharm_hinweis ;;
     terminal|term)   cmd_terminal "$@" ;;
     _terminal_wahl)  cmd__terminal_wahl ;;
     run)             cmd_run "$@" ;;
@@ -976,6 +1109,7 @@ case $cmd in
     _job)            cmd__job "$@" ;;
     _state)          cmd__state ;;
     _lastcmd)        cmd__lastcmd "$@" ;;
+    _jobcmd)         cmd__jobcmd "$@" ;;
     _projects)       projects ;;
     _commands)       cmd__commands ;;
     *)               if f=$(feature_cmd "$cmd"); then exec "$f" "$@"; fi

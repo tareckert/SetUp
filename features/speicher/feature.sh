@@ -30,7 +30,7 @@ feature_install() {
 
     sys_file sysctl.conf /etc/sysctl.d/90-ki-speicher.conf
     [ "$CHANGED" = 1 ] && $SUDO sysctl -q --system
-    ok "sysctl: swappiness 100 (zram), page-cluster 0, inotify 524288"
+    ok "sysctl: swappiness 100 (zram), page-cluster 0"
 
     sys_file earlyoom /etc/default/earlyoom
     [ "$CHANGED" = 1 ] && $SUDO systemctl restart earlyoom

@@ -27,7 +27,8 @@ feature_install() {
     # Arbeitsordner – gehören dir und bleiben auch beim Entfernen erhalten
     mkdir -p "$HOME/projects" "$HOME/shared_data/datasets" "$HOME/shared_data/models" "$FDIR/vorlagen"
     [ -f "$FDIR/ki.conf" ] || cp "$FSRC/ki.conf.example" "$FDIR/ki.conf"
-    ok "~/projects, ~/shared_data/{datasets,models}, Einstellungen in ~/.ki/basis/ki.conf"
+    "$FSRC/bin/ki" git >/dev/null 2>&1      # Git-Einstellungen für Host und alle Projekte: ~/.ki/basis/git
+    ok "~/projects, ~/shared_data/{datasets,models}, Einstellungen in ~/.ki/basis/ki.conf und git/"
 }
 
 feature_pre_remove() {

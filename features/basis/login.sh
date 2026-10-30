@@ -10,6 +10,9 @@ done
 unset _ki_d
 export PATH KI_REPO
 export LESSHISTFILE=-          # less legt keine ~/.lesshst an
+# Menü, Rahmen und Umlaute brauchen UTF-8; ohne eingestellte Sprache gilt das immer vorhandene C.UTF-8
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in *.UTF-8|*.utf8|*.utf-8|*.UTF8) ;; *) export LANG=C.UTF-8 ;; esac
+export GIT_CONFIG_GLOBAL="$HOME/.ki/basis/git/config"   # dieselben Git-Einstellungen wie in den Projekten
 
 # Oberfläche auf tty1 starten (Funktion "oberflaeche")
 if [ -f "$HOME/.ki/oberflaeche/.installed" ] && [ -z "${DISPLAY:-}" ] && [ "$(tty)" = /dev/tty1 ]; then

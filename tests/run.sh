@@ -110,6 +110,9 @@ check "Dienste abgeschaltet" bash -c "! grep -q multipathd '$STUB_STATE/enabled'
 check "mc-Lesezeichen in ~/.ki/dateien" test -f "$HOME/.ki/dateien/.config/mc/hotlist"
 check "setup list zeigt Status" bash -c "./setup list | grep -q 'speicher.*installiert'"
 check "setup files nennt /etc/fstab" bash -c "./setup files speicher | grep -q /etc/fstab"
+check "inotify-Wert gehört zu pycharm" bash -c "grep -q max_user_watches '$R/etc/sysctl.d/90-ki-pycharm.conf' && ! grep -q inotify '$R/etc/sysctl.d/90-ki-speicher.conf'"
+check "Git-Einstellungen in ~/.ki/basis/git (mit Zugangsdaten-Speicher)" bash -c "grep -q 'helper = store' '$HOME/.ki/basis/git/config' && test -f '$HOME/.ki/basis/git/credentials' && [ \"\$(stat -c %a '$HOME/.ki/basis/git/credentials')\" = 600 ] && ! test -e '$HOME/.gitconfig'"
+expect "login.sh: Git-Einstellungen und UTF-8" "$(env -u LANG -u LC_ALL -u LC_CTYPE KI_REPO="$REPO" sh -c '. features/basis/login.sh; echo "$GIT_CONFIG_GLOBAL $LANG"')" "$HOME/.ki/basis/git/config C.UTF-8"
 m1=$(cat "$HOME"/.ki/*/.manifest | wc -l)
 check "erneut anwenden (idempotent)" ./setup install basis netz speicher
 expect "keine doppelten Einträge" "$(cat "$HOME"/.ki/*/.manifest | wc -l)" "$m1"
@@ -149,12 +152,24 @@ check "ki stop" "$KI" stop demo
 sleep 1
 id=$("$KI" jobs --porcelain demo | head -n1 | cut -f2)
 check "Job hat aufgeräumt (KeyboardInterrupt)" grep -q "sauber beendet" "$P/demo/.ki/jobs/$id.log"
-expect "Status nach Stopp" "$("$KI" jobs --porcelain demo | head -n1 | cut -f3)" "fertig"
+expect "Status nach Stopp" "$("$KI" jobs --porcelain demo | head -n1 | cut -f3)" "gestoppt"
 sleep 1
 "$KI" run demo --sh 'echo hallo; exit 3' >/dev/null
 sleep 2
 expect "Exit-Code gemeldet" "$("$KI" jobs --porcelain demo | head -n1 | cut -f3)" "fehler (3)"
 check "Statusleiste meldet Job-Ende" bash -c "'$KI' statusbar | grep -q '✗ demo Fehler'"
+check "Statusleiste meldet Stopp" bash -c "'$KI' statusbar | grep -q '■ demo gestoppt'"
+sleep 1
+"$KI" run demo -- python -c 'import cv2' >/dev/null
+sleep 3
+check "Tipp im Log: fehlendes Paket" grep -q 'ki pakete demo opencv-python' "$P/demo/.ki/jobs/$("$KI" jobs --porcelain demo | head -n1 | cut -f2).log"
+expect "Job-Befehl neu startbar gemerkt" "$("$KI" _lastcmd demo)" 'python -c import\ cv2'
+"$KI" new leer2 --vorlage py >/dev/null 2>&1
+printf '# nur ein Kommentar\n' > "$P/leer2/code/requirements.txt"
+check "ki pakete (requirements.txt, offline leer)" "$KI" pakete leer2
+check "ki pakete ohne Pakete und requirements.txt scheitert verständlich" bash -c "rm '$P/leer2/code/requirements.txt'; '$KI' pakete leer2 2>&1 | grep -q 'Welche Pakete'"
+expect "Job-Vorschlag ohne bisherige Jobs" "$("$KI" _lastcmd leer2)" "python main.py"
+"$KI" rm leer2 --yes >/dev/null
 mkdir -p "$P/demo/.system_cache/pip/x" && echo 1 > "$P/demo/.system_cache/pip/x/f"
 check "ki clean" "$KI" clean demo pip
 check "Cache leer, Ordner bleibt" test -d "$P/demo/.system_cache/pip" -a ! -e "$P/demo/.system_cache/pip/x"
@@ -183,9 +198,21 @@ rm -f "$STUB_STATE/i3_tree"
 # Eigene Vorlage
 mkdir -p "$HOME/.ki/basis/vorlagen/meine" && echo "# Meine Vorlage" > "$HOME/.ki/basis/vorlagen/meine/README.md"
 echo ml > "$HOME/.ki/basis/vorlagen/meine/profil"; echo 'print(1)' > "$HOME/.ki/basis/vorlagen/meine/start.py"
-check "eigene Vorlage gelistet" bash -c "'$KI' new --vorlagen | grep -q '^meine'"
+echo "Meine eigene Vorlage" > "$HOME/.ki/basis/vorlagen/meine/beschreibung"
+check "eigene Vorlage gelistet (mit Beschreibung)" bash -c "'$KI' new --vorlagen | grep -q '^meine.Meine eigene Vorlage$'"
+expect "Vorlagen: ml zuerst, alle beschrieben" "$("$KI" new --vorlagen | head -n4 | cut -f1 | paste -sd' ')" "ml llm py node"
+check "jede eingebaute Vorlage hat eine Beschreibung" bash -c "! '$KI' new --vorlagen | grep -qP '\t\$'"
 check "ki new mit eigener Vorlage" "$KI" new eigen --vorlage meine
-check "eigene Vorlage kopiert, Profil übernommen" bash -c "test -f '$P/eigen/code/start.py' && ! test -e '$P/eigen/code/profil' && grep -qx ml '$P/eigen/.ki/profile'"
+check "eigene Vorlage kopiert, Profil übernommen" bash -c "test -f '$P/eigen/code/start.py' && ! test -e '$P/eigen/code/profil' && ! test -e '$P/eigen/code/beschreibung' && grep -qx ml '$P/eigen/.ki/profile'"
+check "ki new llm (Sprachmodell-Vorlage, Profil ml)" bash -c "'$KI' new sprach --vorlage llm >/dev/null && test -f '$P/sprach/code/chat.py' && grep -qx ml '$P/sprach/.ki/profile' && '$KI' rm sprach --yes >/dev/null"
+
+# Git: gemeinsame Einstellungen und Zugangsdaten für Host, alle Projekte und PyCharm
+check "ki git name" "$KI" git name "Test Nutzer" test@example.org
+expect "Git-Name im Kerker" "$("$KI" shell demo -- git config --global user.name)" "Test Nutzer"
+"$KI" shell demo -- sh -c 'printf "protocol=https\nhost=example.org\nusername=u\npassword=geheim\n" | git credential approve' >/dev/null 2>&1
+check "Zugangsdaten aus dem Kerker auf dem Host gespeichert" grep -q 'u:geheim@example.org' "$HOME/.ki/basis/git/credentials"
+expect "und in einem anderen Projekt nutzbar" "$("$KI" shell eigen -- sh -c 'printf "protocol=https\nhost=example.org\n\n" | git credential fill' 2>/dev/null | sed -n 's/^password=//p')" "geheim"
+check "ki git vergessen" bash -c "'$KI' git vergessen && ! test -s '$HOME/.ki/basis/git/credentials'"
 
 # clone und import (lokal, ohne Netz)
 src="$T/quelle"; mkdir -p "$src/.venv" "$src/.idea"; echo 'torch' > "$src/requirements.txt"; echo x > "$src/main.py"
@@ -196,6 +223,9 @@ check "ki import" "$KI" import "$src" importiert
 check "importiert ohne .venv/.idea" bash -c "test -f '$P/importiert/code/main.py' && ! test -e '$P/importiert/code/.idea' && test -x '$P/importiert/code/.venv/bin/python'"
 
 # Zwei PyCharm-Fenster gleichzeitig (Schein-PyCharm), Kopie der Einstellungen, Restarter (B8)
+vmo="$HOME/.ki/pycharm/config/PyCharm2099.1/pycharm64.vmoptions"
+mkdir -p "${vmo%/*}" && printf -- '-Xmx3000m\n-Dide.no.platform.update=false\n' > "$vmo"   # eigene Werte
+expect "Hinweis zum ersten PyCharm-Start" "$("$KI" _state | sed -n 's/^pycharm_neu=//p')" "1"
 check "ki open demo (Fenster 1)" env DISPLAY=:99 "$KI" open demo
 sleep 1
 check "ki open eigen (Fenster 2)" env DISPLAY=:99 "$KI" open eigen
@@ -204,7 +234,9 @@ expect "beide Fenster sichtbar" "$("$KI" _state | sed -n 's/^ide=//p')" "demo,ei
 check "selbes Projekt nicht doppelt" bash -c "DISPLAY=:99 '$KI' open demo | grep -q 'schon'"
 check "Fenster 2 nutzt Kopie der Einstellungen" test -f "$HOME/.ki/pycharm/fenster-2/config/marker-demo"
 check "Fenster 1 schreibt in die echten Einstellungen" test -f "$HOME/.ki/pycharm/config/marker-demo"
-check "vmoptions angelegt" grep -q -- '-Xmx2048m' "$HOME/.ki/pycharm/config/PyCharm2099.1/pycharm64.vmoptions"
+check "vmoptions ergänzt (keine Rückfragen beim Start)" grep -qx -- '-Djb.consents.confirmation.enabled=false' "$vmo"
+check "eigene vmoptions-Werte bleiben" bash -c "grep -qx -- -Xmx3000m '$vmo' && ! grep -q -- -Xmx2048m '$vmo' && ! grep -qx -- -Dide.no.platform.update=true '$vmo'"
+expect "Erststart-Hinweis danach aus" "$("$KI" _state | sed -n 's/^pycharm_neu=//p')" "0"
 for _ in $(seq 20); do [ -z "$("$KI" _state | sed -n 's/^ide=//p')" ] && break; sleep 1; done
 expect "Fenster nach Restarter-Ende zu (B8)" "$("$KI" _state | sed -n 's/^ide=//p')" ""
 check "IDE-Log" grep -q '^# Ende' "$P/demo/.ki/ide.log"

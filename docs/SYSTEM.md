@@ -1,6 +1,7 @@
 # KI-Workstation – Systemdokumentation v3
 
-Stand: 28.10.2026 · Neuaufbau mit Funktionen zum Ein- und Ausschalten · Vorgeschichte: [REVIEW.md](REVIEW.md)
+Stand: 30.10.2026 · v3.1: Code-Umgebung ohne Vorwissen (Git, Pakete, PyCharm-Erststart), Vorlage llm,
+Hilfe „Erste Schritte“ · Vorgeschichte: [REVIEW.md](REVIEW.md)
 
 ## 1. Ziel und Regeln
 
@@ -49,7 +50,7 @@ Einschalten ─► getty tty1 (Funktion autologin) ─► ~/.profile ─► basi
   Arbeitsfläche Menü   urxvt „ki-menu“ ─► ki menu (gum)   ← kommt immer wieder
   Arbeitsfläche IDE    PyCharm-Fenster (eins oder mehrere, nebeneinander/Reiter/zweiter Monitor)
   Arbeitsfläche Extra  Jupyter, Dateimanager, GPU-Monitor
-  Leiste               Jobs (✓/✗ beim Ende) · GPU · CPU · RAM · SSD · Uhr   (alle 10 s)
+  Leiste               Jobs (✓ fertig / ■ gestoppt / ✗ Fehler) · GPU · CPU · RAM · SSD · Uhr   (alle 10 s)
 
   ki (Kern) ─► bwrap-Kerker ─► PyCharm | bash | Job | JupyterLab
 ```
@@ -68,7 +69,8 @@ Einschalten ─► getty tty1 (Funktion autologin) ─► ~/.profile ─► basi
   ├── .bashrc        von ki erzeugt (eigenes: .bashrc.local)
   └── shared_data    = ~/shared_data, nur lesbar
 ~/.config/JetBrains, ~/.local/share/JetBrains, ~/.java   (nur PyCharm) aus ~/.ki/pycharm/
-~/.gitconfig, ~/.ssh/config, ~/.ssh/known_hosts         nur lesbar; SSH-Agent-Socket
+~/.config/git        = ~/.ki/basis/git: Git-Name, Einstellungen, Zugangsdaten – beschreibbar, für alle gleich
+~/.ssh/config, ~/.ssh/known_hosts                        nur lesbar; SSH-Agent-Socket
 ```
 
 Andere Projekte, `~/.ki` und der Rest des Host-Homes sind im Kerker unsichtbar.
@@ -102,7 +104,7 @@ alles und vergleicht: Dateien, Rechte, Inhalte, Paketliste und Dienste müssen e
 
 | Funktion | Pakete (apt) | Außerhalb ihres Ordners | Daten in `~/.ki/<funktion>/` |
 |---|---|---|---|
-| basis | git, curl, nano, less, bubblewrap, rsync, Python, build-essential … | je 1 Zeile in `~/.profile`, `~/.bashrc`; `/etc/apparmor.d/ki-bwrap` nur falls nötig | `ki.conf`, `vorlagen/`, `logs/` |
+| basis | git, curl, nano, less, bubblewrap, rsync, Python, build-essential … | je 1 Zeile in `~/.profile`, `~/.bashrc`; `/etc/apparmor.d/ki-bwrap` nur falls nötig | `ki.conf`, `vorlagen/`, `logs/`, `git/` (Git-Einstellungen und Zugangsdaten) |
 | netz | – | 1 Zeile in `/etc/gai.conf` | – |
 | schlank | – (snapd wird entfernt) | `/etc/cloud/cloud-init.disabled`, `/etc/apt/preferences.d/ki-no-snapd`; Dienste aus | – |
 | speicher | zram-tools, earlyoom | `/etc/default/{zramswap,earlyoom}`, `/etc/sysctl.d/90-ki-speicher.conf`, `/etc/systemd/journald.conf.d/90-ki.conf`; Swap-Zeile in `/etc/fstab` auskommentiert | `swapdateien` (zum Wiederherstellen) |
@@ -113,7 +115,7 @@ alles und vergleicht: Dateien, Rechte, Inhalte, Paketliste und Dienste müssen e
 | oberflaeche | xserver-xorg, xinit, i3, urxvt, Schriften … | Xorg-Log `~/.local/share/xorg` (wird beim Entfernen gelöscht) | `einstellungen.conf`, `eigene.conf`, `eigene.Xresources`, `xsession.log` |
 | autologin | – | `/etc/systemd/system/getty@tty1.service.d/ki-autologin.conf`, `~/.hushlogin` | – |
 | menue | gum | `/etc/apt/keyrings/ki-charm.gpg`, `/etc/apt/sources.list.d/ki-charm.list`, `/etc/sudoers.d/ki-menue`, `/opt/ki/menue/ki-power` | – |
-| pycharm | X- und Browser-Bibliotheken | `/opt/ki/pycharm/<version>`, `/opt/ki/pycharm/current` | `config/`, `data/` (Plugins), `java/`, `fenster-N/` |
+| pycharm | X- und Browser-Bibliotheken | `/opt/ki/pycharm/<version>`, `/opt/ki/pycharm/current`, `/etc/sysctl.d/90-ki-pycharm.conf` (inotify) | `config/`, `data/` (Plugins), `java/`, `fenster-N/` |
 | dateien | mc | `/etc/sudoers.d/ki-dateien`, `/opt/ki/dateien/ki-mount`, `/media/ki` | mc-Einstellungen, Lesezeichen |
 | monitor | htop, nvtop | – | htop/nvtop-Einstellungen |
 | node | nodejs, npm | – | – |
@@ -131,37 +133,44 @@ werden von `ki` weitergereicht, wenn die Funktion installiert ist (Tab-Vervollst
 
 | Bereich | Befehle |
 |---|---|
-| Projekte | `ki new <p> [--vorlage …] [--torch] [--python 3.12]`, `ki clone <url>`, `ki import <ordner>`, `ki open <p>`, `ki shell <p>`, `ki terminal [p]`, `ki list`, `ki clean`, `ki mv`, `ki rm` |
+| Projekte | `ki new <p> [--vorlage …] [--torch] [--python 3.12]`, `ki clone <url>`, `ki import <ordner>`, `ki open <p>`, `ki shell <p>`, `ki terminal [p]`, `ki pakete <p> [paket…]`, `ki list`, `ki clean`, `ki mv`, `ki rm` |
 | Training | `ki run <p> -- cmd`, `ki jobs`, `ki logs`, `ki stop`, `ki jupyter <p>`, `ki power` |
 | Funktionen | `ki setup`, `ki setup list/install/remove/reinstall/files/update/remove-all` |
-| System | `ki status`, `ki doctor`, `ki update`, `ki menu`, `ki start`, `ki fenster [befehl]`, `ki einstellungen` |
+| System | `ki status`, `ki doctor`, `ki update`, `ki git [name …/vergessen]`, `ki menu`, `ki start`, `ki fenster [befehl]`, `ki einstellungen` |
 | Werkzeuge | `ki dateien`, `ki usb`, `ki top`, `ki pycharm update/versionen/aufraeumen/speicher` |
 
 ### 5.2 Menü
 
 ```
+      ↑↓ Enter wählen · Esc zurück · Win+2 PyCharm · Win+T Terminal · Win+D Dateien
 ▶ Weiter mit <letztes Projekt>  |  ▶ Zu PyCharm (…)  |  ▶ Terminal in … (ohne Oberfläche)
 Projekt öffnen                    (nur mit Oberfläche und PyCharm)
 Neues Projekt                     Vorlage · Git-Repo klonen · vorhandenen Ordner übernehmen
 Terminal im Projekt
-Training & Jobs                   Job starten/ansehen/stoppen · JupyterLab · GPU-Monitor · CPU-Modus
-Projekte verwalten                Größe · Dateimanager · Logs · Cache je Ordner · Umbenennen · Löschen
+Training & Jobs                   Job starten (Befehl vorgeschlagen) · Jobs ansehen/stoppen/neu starten ·
+                                  GPU-Monitor · CPU-Modus · JupyterLab (nur mit fernzugriff)
+Projekte verwalten                Größe · PyCharm · Terminal · Dateimanager · Pakete installieren ·
+                                  Logs · Cache je Ordner · Umbenennen · Löschen
 Dateien & USB                     Dateimanager · USB einbinden/auswerfen
 Einstellungen                     siehe 5.4
 System                            Status · Diagnose · apt-Update · Setup-Update · PyCharm-Update ·
-                                  Host-Terminal · Handbuch (offline) · Neustart
-Hilfe & Tasten · Ausschalten
+                                  Host-Terminal · Neustart
+Hilfe & Erste Schritte            Erste Schritte · Tasten und Befehle · alle Handbücher (offline, formatiert)
+Ausschalten
 ```
 
+Die Zeile unter dem Menükopf nennt die wichtigsten Tasten; gums englische Tastenhilfe ist aus.
+Logs öffnen sich in der Oberfläche als eigenes Fenster (q schließt), das Menü bleibt bedienbar.
 Ohne Oberfläche (Konsole, SSH) blendet das Menü alles aus, was einen Bildschirm braucht. Ohne gum
 läuft ein nummerierter Notfallmodus.
 
 ### 5.3 Vorlagen
 
-Eingebaut: `ml` (PyTorch-Check, Trainingsvorlage mit fp16 und Checkpoints), `py`, `node`.
+Eingebaut: `ml` (PyTorch-Check, Trainingsvorlage mit fp16 und Checkpoints), `llm` (Chat mit einem
+kleinen Sprachmodell, fp16, nach dem ersten Start offline), `py`, `node`.
 Eigene: einen Ordner nach `~/.ki/basis/vorlagen/<name>/` legen – sein Inhalt wird nach `code/`
 kopiert. Optional darin eine Datei `profil` mit `ml`, `py` oder `node` (Umgebungsvariablen im
-Kerker) und eine `README.md`, deren erste Zeile im Menü als Beschreibung erscheint.
+Kerker) und eine Datei `beschreibung` mit einer Zeile für das Menü. Beide werden nicht mitkopiert.
 
 ### 5.4 Einstellungen
 
@@ -176,6 +185,7 @@ direkt nach jeder Änderung (`ki anzeige anwenden`) – nie im Hintergrund.
 | Bildschirm aus nach | 5–60 Minuten oder nie |
 | Tastatur | Layout (de, ch, at, us) und Tastenwiederholung |
 | Oberfläche automatisch starten | sonst bleibt tty1 eine Konsole (`ki start`) |
+| Git | Name und E-Mail für Commits; gespeicherte Zugangsdaten löschen (`ki git`) |
 | Zeitzone | `timedatectl` |
 | PyCharm-Speicher | Heap 1–4 GB (`ki pycharm speicher`) |
 | CPU-Modus | ausgewogen / Leistung |
@@ -213,11 +223,33 @@ gehören die Dateien dir) und wirft sie sicher aus. Kein udisks-Dienst – der k
 ### 5.7 Jobs, Jupyter, Monitor
 
 - `ki run` startet einen Befehl im Kerker als eigene Sitzung: läuft weiter ohne Menü und ohne
-  PyCharm, Log pro Job. Die Leiste zeigt laufende Jobs und 15 Minuten lang „✓ fertig“ oder „✗ Fehler“.
-- `ki stop` schickt Strg+C nur an das Programm (Python kann seinen Checkpoint speichern), nach 30 s hart.
+  PyCharm, Log pro Job. Die Leiste zeigt laufende Jobs und 15 Minuten lang „✓ fertig“, „■ gestoppt“
+  oder „✗ Fehler“. Das Menü schlägt den Befehl vor (letzter Job, sonst `train.py`,
+  `train_example.py` oder `main.py`) und startet beendete Jobs auf Wunsch neu.
+- `ki stop` schickt Strg+C nur an das Programm (Python kann seinen Checkpoint speichern), nach 30 s
+  hart. Der Job gilt danach als „gestoppt“, nicht als Fehler.
+- Endet ein Job mit Fehler, erkennt ki bekannte Ursachen und schreibt den nächsten Schritt ans Ende
+  des Logs: fehlendes Paket (`ki pakete <p> <paket>`, auch wenn Modul- und Paketname verschieden
+  sind, z. B. `cv2` → `opencv-python`) oder vollen Grafikspeicher.
 - `ki jupyter` startet JupyterLab auf 127.0.0.1 – Browser hier nicht vorhanden, also vom Zweitrechner
   per SSH-Tunnel (Funktion `fernzugriff`).
 - `ki top` zeigt nvtop, `ki top cpu` htop.
+
+### 5.8 Programmieren ohne Vorwissen
+
+Was sonst Handarbeit oder Wissen aus der Doku wäre, erledigt das System selbst:
+
+| Sonst nötig | Hier |
+|---|---|
+| venv anlegen, Interpreter in PyCharm wählen | `code/.venv` entsteht beim Anlegen; PyCharm erkennt es (Pfad überall gleich) |
+| PyCharm: Update-Suche, Datenfreigabe-Dialog, Tipps, Einstellungsimport | per vmoptions abgeschaltet (`KI_IDE_FLAGS` in `ki.conf`); eigene Werte bleiben |
+| Wissen, was PyCharm beim ersten Start fragt | das Menü erklärt es einmal vor dem ersten Start |
+| `git config --global user.name …` | Menü fragt beim ersten Projekt; Einstellungen → Git |
+| Zugangsdaten je Projekt/Repo eintippen | Git merkt sie sich einmal für alle Projekte, PyCharm und den Host (`~/.ki/basis/git/credentials`, Rechte 600) |
+| `pip install -r requirements.txt` im richtigen Ordner | Menü → Projekte verwalten → Pakete, oder `ki pakete <p>` (auch `pyproject.toml`) |
+| PyTorch-Index für CUDA suchen | PyPI-Wheel bringt die CUDA-Bibliotheken mit; `ki doctor` warnt bei zu altem Treiber |
+| Kopieren/Einfügen im Terminal, Paketbefehl | steht beim Öffnen des Projekt-Terminals da |
+| Locale/UTF-8 | ohne eingestellte Sprache gilt C.UTF-8 – Menü und Umlaute bleiben lesbar |
 
 ## 6. Speicher und GPU
 
@@ -243,6 +275,9 @@ gehören die Dateien dir) und wirft sie sicher aus. Kein udisks-Dienst – der k
 | Benachrichtigungsdienst (dunst) | verworfen | die Leiste zeigt Job-Enden ohne zusätzlichen Prozess |
 | i3-Mod Alt | Win | Alt+Enter, Alt+1 u. a. gehören PyCharm |
 | `.idea`/SDK-Einträge erzeugen | verworfen | bricht mit PyCharm-Versionen; PyCharm erkennt `code/.venv` selbst |
+| PyCharm-Rückfragen per vmoptions abschalten | übernommen (ohne Lizenz/EULA) | Update-Check wäre Hintergrund-Traffic; Lizenz und Nutzungsbedingungen bestätigst du selbst |
+| Git-Zugangsdaten im Schlüsselbund (libsecret) | verworfen | braucht einen Hintergrunddienst; `credential-store` mit Rechten 600 im Ordner der Funktion |
+| JupyterLab im Menü ohne Fernzugriff | ausgeblendet | kein Browser auf der Workstation; Notebooks öffnet PyCharm direkt |
 | gemeinsamer Paket-Cache aller Projekte | verworfen | widerspricht Zero-Garbage; Hardlinks gehen nicht über Bind-Mounts |
 | `uv venv` für neue Projekte | ersetzt | `python3 -m venv` geht offline; uv nur für andere Python-Versionen und schnelle Installationen |
 | gum als GitHub-Binary statt Charm-apt-Repo | verworfen | das Repo ist der dokumentierte Weg und bekommt Updates über „System aktualisieren“ |
@@ -258,7 +293,9 @@ gehören die Dateien dir) und wirft sie sicher aus. Kein udisks-Dienst – der k
 - **Kein Browser auf der Workstation** – JupyterLab und Doku-Links vom Zweitrechner.
 - **Interpreter:** PyCharm erkennt `~/code/.venv` normalerweise selbst. Sonst einmal *Add Interpreter
   → Existing → ~/code/.venv/bin/python* – der Pfad ist in jedem Projekt gleich.
-- **Lizenzdialog** einmal „ohne Abo fortfahren“; der Zustand liegt in `~/.ki/pycharm`.
+- **Lizenzdialog** einmal „ohne Abo fortfahren“ oder aktivieren; der Zustand liegt in `~/.ki/pycharm`.
+- **Git-Zugangsdaten** liegen unverschlüsselt (nur für dich lesbar) in `~/.ki/basis/git/credentials` –
+  für GitHub einen Token mit kurzer Laufzeit nehmen; löschen: Einstellungen → Git.
 - **Strg+C in `ki shell <p> <befehl>`** erreicht nur das Programm; hängt es wirklich, das Fenster schließen.
 
 ## 9. Stand der bekannten Bugs (aus v1)
@@ -278,6 +315,10 @@ gehören die Dateien dir) und wirft sie sicher aus. Kein udisks-Dienst – der k
 | B12 | CUDA-PATH mehrfach | entfällt – `login.sh` setzt PATH, keine `.bashrc`-Bearbeitung |
 | B13 | Esc beendet Start | entfällt – kein `set -e`, Esc = zurück |
 | N1 | Menüfenster erschien nicht (v2) | behoben – i3 wandelt `\"` in seiner Konfiguration um; die Menü-Schleife ist jetzt ein eigenes Skript und endet mit der Oberfläche (im Test mit echtem i3 geprüft) |
+| N2 | Vorlagen hießen im Menü alle „Projekt“ | behoben – Datei `beschreibung` je Vorlage |
+| N3 | gestoppter Job als „fertig“ oder „fehler (130)“ | behoben – „gestoppt“ in Liste und Leiste |
+| N4 | Job-Befehl mit Leerzeichen nicht neu startbar | behoben – wird als Shell-Zeile mit Anführungszeichen gemerkt |
+| N5 | Menü mit Zeichensalat ohne eingestellte Sprache | behoben – login.sh nimmt dann C.UTF-8 |
 
 ## 10. Wartung
 
@@ -308,7 +349,8 @@ Programmdaten in `~/.config` oder `~/.local/share`.
 | Oberfläche | `cat ~/.ki/oberflaeche/xsession.log` | bei iGPU: Strg+Alt+F2, `ki setup remove igpu` |
 | Menü | Win+1 | Win+Shift+R; im Fenster steht sonst eine Shell → `ki menu` |
 | PyCharm | `less ~/projects/<p>/.ki/ide.log` | „Read-only file system“ → Pfad fehlt im Kerker |
-| Job | `ki logs <p>` | Exit-Code am Ende; plötzlich weg → `journalctl -u earlyoom` |
+| Job | `ki logs <p>` | Exit-Code und oft ein Tipp am Ende; plötzlich weg → `journalctl -u earlyoom` |
+| Git | `ki git` | Name fehlt → Einstellungen → Git; Push abgelehnt → Zugangsdaten löschen, neuen Token eingeben |
 | Netz (nur Installation) | `curl -I https://pypi.org` | `ki setup install netz`; Uhrzeit prüfen |
 
 **Testcheckliste nach Änderungen**
@@ -318,7 +360,10 @@ Programmdaten in `~/.config` oder `~/.local/share`.
 - [ ] Win+T (Projekt wählen) und Win+D: Terminal und Dateien je eine Bildschirmhälfte, einzeln schließbar
 - [ ] Letztes Fenster auf „Extra“ schließen: Anzeige springt zurück zum Menü
 - [ ] Win+1 während PyCharm läuft: Menü bedienbar, Kopf zeigt beide Projekte
-- [ ] Job starten, Leiste zeigt „Jobs 1“, nach dem Ende „✓ zz-test fertig“
+- [ ] Job starten (Befehl vorgeschlagen), Leiste zeigt „Jobs 1“; stoppen → „■ zz-test gestoppt“,
+      neu starten → setzt am Checkpoint fort
+- [ ] Projekt mit Vorlage llm, `chat.py` in PyCharm starten: Antwort kommt, zweiter Start offline
+- [ ] Git: Commit in PyCharm, Push fragt einmal nach dem Token, im zweiten Projekt nicht mehr
 - [ ] USB-Stick einbinden, im Dateimanager öffnen, auswerfen
 - [ ] Einstellungen → Skalierung 125 %: neues Terminal größer; zurück auf 100 %
 - [ ] Alt+Enter in PyCharm öffnet Quick-Fixes
